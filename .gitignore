@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.cache/
+.triton/
+*.egg-info/
+build/
+dist/
+runs/
+.gluonkit/
