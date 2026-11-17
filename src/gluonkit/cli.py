@@ -9,11 +9,26 @@ from gluonkit.interfaces.backend import Backend
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="gk", description="Gluon kernel tools")
     commands = parser.add_subparsers(dest="command", required=True)
+    
     probe_parser = commands.add_parser("probe", help="Show NVIDIA GPU information")
     probe_parser.add_argument("--json", action="store_true", help="Output JSON")
+
+    layout_parser = commands.add_parser("layout", help="Show a Gluon layout mapping (no GPU required)")
+    layout_parser.add_argument("expression", help="BlockedLayout(...) or SliceLayout(...)")
+    layout_parser.add_argument("--shape", required=True, help="Tensor dimensions, e.g. 64,64")
+    layout_parser.add_argument("--hardware", action="store_true", help="Group coordinates by warp/thread")
     args = parser.parse_args(argv)
 
     backend: Backend = NvidiaBackend()
+    if args.command == "layout":
+        try:
+            shape = [int(dim.strip()) for dim in args.shape.split(",")]
+            print(backend.layout(args.expression, shape, args.hardware), end="")
+        except (ImportError, OSError, RuntimeError, ValueError) as exc:
+            print(f"gk: {exc}", file=sys.stderr)
+            return 1
+        return 0
+
     available, reason = backend.available()
     if not available:
         print(f"gk: {reason}", file=sys.stderr)

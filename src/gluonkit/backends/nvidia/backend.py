@@ -21,3 +21,8 @@ class NvidiaBackend(Backend):
 
     def probe(self) -> ProbeResult:
         return probe(self.device)
+
+    def layout(self, expression: str, shape: list[int], hardware: bool = False) -> str:
+        from .layout import render_layout
+
+        return render_layout(expression, shape, hardware)
