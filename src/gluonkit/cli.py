@@ -69,14 +69,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"gk: {exc}", file=sys.stderr)
             return 1
         if args.json:
-            print(json.dumps(result, ensure_ascii=False))
-        if not result["ok"]:
-            for error in result["errors"]:
-                print(error["message"], file=sys.stderr)
+            print(json.dumps(result.to_dict(), ensure_ascii=False))
+        if not result.ok:
+            for error in result.errors:
+                print(error.message, file=sys.stderr)
             return 1
         if not args.json:
             print("Compile succeeded")
-            for key, paths in result["artifacts"].items():
+            for key, paths in result.artifacts.items():
                 print(f"IR ({key}):")
                 for extension, path in paths.items():
                     print(f"  {extension}: {path or 'unavailable'}")
@@ -90,9 +90,9 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, RuntimeError, ValueError) as exc:
             print(f"gk: {exc}", file=sys.stderr)
             return 1
-        if result["error"]:
-            print(result["error"], file=sys.stderr)
-        print("Check passed" if result["passed"] else "Check failed")
-        return 0 if result["passed"] else 1
+        if result.error:
+            print(result.error, file=sys.stderr)
+        print("Check passed" if result.passed else "Check failed")
+        return 0 if result.passed else 1
 
     return 1
