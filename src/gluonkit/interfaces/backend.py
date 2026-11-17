@@ -1,6 +1,6 @@
-from typing import Protocol
+from typing import Callable, Protocol
 
-from .types import ProbeResult
+from .types import ProbeResult, ProfileData
 
 
 class Backend(Protocol):
@@ -13,3 +13,10 @@ class Backend(Protocol):
     def probe(self) -> ProbeResult: ...
 
     def layout(self, expression: str, shape: list[int], hardware: bool = False) -> str: ...
+
+    def profile(
+        self, fn: Callable[[], object], iters: int, warmup: int, *,
+        flush_l2: bool = False, trace_path: str | None = None,
+    ) -> ProfileData: ...
+
+    def flush_cache(self) -> None: ...

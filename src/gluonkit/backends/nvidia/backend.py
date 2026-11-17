@@ -1,5 +1,7 @@
+from typing import Callable
+
 from gluonkit.interfaces.backend import Backend
-from gluonkit.interfaces.types import ProbeResult
+from gluonkit.interfaces.types import ProbeResult, ProfileData
 
 from .probe import probe
 
@@ -26,3 +28,17 @@ class NvidiaBackend(Backend):
         from .layout import render_layout
 
         return render_layout(expression, shape, hardware)
+
+    def profile(
+        self, fn: Callable[[], object], iters: int, warmup: int, *,
+        flush_l2: bool = False, trace_path: str | None = None,
+    ) -> ProfileData:
+        from .profiler import profile
+
+        return profile(fn, iters, warmup, device=self.device,
+                       flush_l2=flush_l2, trace_path=trace_path)
+
+    def flush_cache(self) -> None:
+        from .profiler import flush_cache
+
+        flush_cache(self.device)
