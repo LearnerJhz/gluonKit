@@ -9,7 +9,7 @@ from gluonkit.interfaces.backend import Backend
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="gk", description="Gluon kernel tools")
     commands = parser.add_subparsers(dest="command", required=True)
-    
+
     probe_parser = commands.add_parser("probe", help="Show NVIDIA GPU information")
     probe_parser.add_argument("--json", action="store_true", help="Output JSON")
 
@@ -17,7 +17,35 @@ def main(argv: list[str] | None = None) -> int:
     layout_parser.add_argument("expression", help="BlockedLayout(...) or SliceLayout(...)")
     layout_parser.add_argument("--shape", required=True, help="Tensor dimensions, e.g. 64,64")
     layout_parser.add_argument("--hardware", action="store_true", help="Group coordinates by warp/thread")
+
+    compile_parser = commands.add_parser("compile", help="Run an evaluation case to trigger JIT compilation")
+    compile_parser.add_argument("eval_path", help="Python script defining prepare(device, seed)")
+    compile_parser.add_argument("--case", help="Case name (default: first case)")
+    compile_parser.add_argument("--seed", type=int, default=0)
+    compile_parser.add_argument("--json", action="store_true", help="Output JSON")
     args = parser.parse_args(argv)
+
+    if args.command == "compile":
+        from gluonkit.executor import run_compile
+
+        try:
+            result = run_compile(args.eval_path, args.case, args.seed)
+        except (OSError, RuntimeError, ValueError) as exc:
+            print(f"gk: {exc}", file=sys.stderr)
+            return 1
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False))
+        if not result["ok"]:
+            for error in result["errors"]:
+                print(error["message"], file=sys.stderr)
+            return 1
+        if not args.json:
+            print(f"Compile succeeded: {result['case_name']} (seed={result['seed']})")
+            for key, paths in result["artifacts"].items():
+                print(f"IR ({key}):")
+                for extension, path in paths.items():
+                    print(f"  {extension}: {path or 'unavailable'}")
+        return 0
 
     backend: Backend = NvidiaBackend()
     if args.command == "layout":
