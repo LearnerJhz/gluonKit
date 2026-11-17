@@ -30,6 +30,15 @@ class CompileResult:
     def to_dict(self) -> dict:
         return asdict(self)
 
+# gk check 信息
+@dataclass
+class CheckResult:
+    passed: bool
+    error: str | None = None
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
 # gk bench 信息
 @dataclass
 class ProfileKernel:
