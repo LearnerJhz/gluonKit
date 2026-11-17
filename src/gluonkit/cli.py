@@ -24,6 +24,12 @@ def main(argv: list[str] | None = None) -> int:
 
     check_parser = commands.add_parser("check", help="Check an evaluation script for correctness")
     check_parser.add_argument("eval_path", help="Python script defining prepare(device)")
+
+    bench_parser = commands.add_parser("bench", help="Measure mean GPU kernel time")
+    bench_parser.add_argument("eval_path", help="Python script defining prepare(device)")
+    bench_parser.add_argument("--trace", action="store_true", help="Export measured run's Chrome trace")
+    bench_parser.add_argument("--no-baseline", action="store_true", help="Do not measure ref")
+    bench_parser.add_argument("--json", action="store_true", help="Output JSON")
     args = parser.parse_args(argv)
 
     if args.command == "probe":
@@ -94,5 +100,34 @@ def main(argv: list[str] | None = None) -> int:
             print(result.error, file=sys.stderr)
         print("Check passed" if result.passed else "Check failed")
         return 0 if result.passed else 1
+
+    if args.command == "bench":
+        from gluonkit.executor import run_bench
+
+        try:
+            result = run_bench(args.eval_path, trace=args.trace,
+                               no_baseline=args.no_baseline)
+        except Exception as exc:
+            print(f"gk: {exc}", file=sys.stderr)
+            return 1
+        if args.json:
+            print(json.dumps(result.to_dict(), ensure_ascii=False, allow_nan=False))
+        else:
+            print(f"Device kernel time (mean): {result.device_time_ms:.6f} ms")
+            for label, value, unit in (
+                ("Baseline (ref)", result.baseline_time_ms, "ms"),
+                ("Speedup vs baseline", result.speedup_vs_baseline, "x"),
+                ("Compute throughput", result.tflops, "TFLOP/s"),
+                ("Estimated bandwidth", result.gbps, "GB/s"),
+                ("Roofline", result.roofline_pct, "%"),
+            ):
+                print(f"{label}: {value:.6f} {unit}" if value is not None else f"{label}: n/a")
+            print(f"Bound by: {result.bound_by or 'n/a'}")
+            print("Kernels (mean per launch):")
+            for kernel in result.kernels:
+                print(f"  {kernel.name}: {kernel.avg_ms:.6f} ms")
+            if result.trace_path:
+                print(f"Trace: {result.trace_path}")
+        return 0
 
     return 1

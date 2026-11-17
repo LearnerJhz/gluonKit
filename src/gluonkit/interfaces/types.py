@@ -54,3 +54,19 @@ class ProfileData:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+@dataclass
+class BenchResult:
+    device_time_ms: float
+    kernels: list[ProfileKernel]
+    baseline_time_ms: float | None = None
+    speedup_vs_baseline: float | None = None
+    tflops: float | None = None
+    gbps: float | None = None
+    roofline_pct: float | None = None
+    bound_by: str | None = None
+    trace_path: str | None = None
+
+    def to_dict(self) -> dict:
+        return asdict(self)

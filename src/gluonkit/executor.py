@@ -9,7 +9,8 @@ import traceback
 from gluonkit.backends.nvidia.backend import NvidiaBackend
 from gluonkit.backends.nvidia.compiler import export_ir
 from gluonkit.core.checker import check_task
-from gluonkit.interfaces.types import CheckResult, CompileError, CompileResult
+from gluonkit.core.bencher import bench_task
+from gluonkit.interfaces.types import BenchResult, CheckResult, CompileError, CompileResult
 
 
 def load_task(eval_path: str, device: str) -> dict:
@@ -61,3 +62,18 @@ def run_check(eval_path: str) -> CheckResult:
         return check_task(task)
     except Exception:
         return CheckResult(passed=False, error=traceback.format_exc())
+
+
+def run_bench(eval_path: str, *, trace: bool = False,
+              no_baseline: bool = False) -> BenchResult:
+    backend = NvidiaBackend()
+    available, reason = backend.available()
+    if not available:
+        raise RuntimeError(reason)
+    task = load_task(eval_path, backend.device)
+    trace_path = None
+    if trace:
+        root = Path("runs").resolve()
+        root.mkdir(exist_ok=True)
+        trace_path = str(Path(tempfile.mkdtemp(prefix="bench-", dir=root)) / "trace.json")
+    return bench_task(task, backend, trace_path=trace_path, no_baseline=no_baseline)
