@@ -5,8 +5,12 @@ from gluonkit.interfaces.backend import Backend
 from gluonkit.interfaces.types import BenchResult
 
 
-def bench_task(task: dict, backend: Backend, *, iters: int = 100,
-               warmup: int = 10, no_baseline: bool = False,
+DEFAULT_ITERS = 100
+DEFAULT_WARMUP = 10
+
+
+def bench_task(task: dict, backend: Backend, *, iters: int = DEFAULT_ITERS,
+               warmup: int = DEFAULT_WARMUP, no_baseline: bool = False,
                trace_path: str | None = None) -> BenchResult:
     ref = None if no_baseline else task.get("ref")
     if ref is not None and not callable(ref):

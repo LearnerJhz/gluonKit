@@ -30,6 +30,30 @@ def main(argv: list[str] | None = None) -> int:
     bench_parser.add_argument("--trace", action="store_true", help="Export measured run's Chrome trace")
     bench_parser.add_argument("--no-baseline", action="store_true", help="Do not measure ref")
     bench_parser.add_argument("--json", action="store_true", help="Output JSON")
+
+    run_parser = commands.add_parser("run", help="compile -> check -> bench and record in history")
+    run_parser.add_argument("eval_path", help="Python script defining prepare(device) and KERNEL_PATH")
+    run_parser.add_argument("--note", help="What changed and why")
+    run_parser.add_argument("--parent", help="Parent history record id")
+    run_parser.add_argument("--trace", action="store_true", help="Export measured run's Chrome trace")
+
+    history_parser = commands.add_parser("history", help="Inspect experiment history")
+    history_commands = history_parser.add_subparsers(dest="history_command", required=True)
+
+    list_parser = history_commands.add_parser("list", help="List records")
+    list_parser.add_argument("--kernel", help="Only records for this kernel file")
+
+    show_parser = history_commands.add_parser("show", help="Show one record as JSON")
+    show_parser.add_argument("id")
+
+    best_parser = history_commands.add_parser("best", help="Fastest checked comparable record")
+    best_parser.add_argument("kernel", nargs="?", help="Kernel file, e.g. examples/gemm/gemm.py")
+    best_parser.add_argument("--like", help="Rank only records comparable with this id")
+
+    diff_parser = history_commands.add_parser("diff", help="Source and metric differences")
+    diff_parser.add_argument("id_a")
+    diff_parser.add_argument("id_b")
+    
     args = parser.parse_args(argv)
 
     if args.command == "probe":
@@ -130,4 +154,103 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Trace: {result.trace_path}")
         return 0
 
+    if args.command == "run":
+        from gluonkit.executor import run_pipeline
+
+        try:
+            record = run_pipeline(args.eval_path, note=args.note, parent_id=args.parent,
+                                  trace=args.trace)
+        except Exception as exc:
+            print(f"gk: {exc}", file=sys.stderr)
+            return 1
+        compile_result, check, bench = record["compile"], record["check"], record["bench"]
+        print(f"Compile: {'ok' if compile_result['ok'] else 'failed'}")
+        if not compile_result["ok"]:
+            for error in compile_result["errors"]:
+                print(error["message"], file=sys.stderr)
+        if check is not None:
+            print(f"Check: {'passed' if check['passed'] else 'failed'}")
+            if check["error"]:
+                print(check["error"], file=sys.stderr)
+        if bench is not None:
+            print(f"Device kernel time (mean): {bench['device_time_ms']:.6f} ms")
+            for label, name, unit in (
+                ("Baseline (ref)", "baseline_time_ms", "ms"),
+                ("Speedup vs baseline", "speedup_vs_baseline", "x"),
+                ("Compute throughput", "tflops", "TFLOP/s"),
+                ("Estimated bandwidth", "gbps", "GB/s"),
+            ):
+                value = bench[name]
+                print(f"{label}: {value:.6f} {unit}" if value is not None else f"{label}: n/a")
+            if bench["trace_path"]:
+                print(f"Trace: {bench['trace_path']}")
+        if record["error"]:
+            print(record["error"], file=sys.stderr)
+        print(f"Recorded {record['id']} ({record['status']})")
+        return 0 if record["status"] == "ok" else 1
+
+    if args.command == "history":
+        from gluonkit.core.history import METRICS, History
+
+        history = History()
+        try:
+            if args.history_command == "list":
+                records = history.list(args.kernel)
+                if not records:
+                    print("No history records")
+                for record in records:
+                    _print_record_line(record)
+            elif args.history_command == "show":
+                print(json.dumps(history.get(args.id), ensure_ascii=False, indent=2))
+            elif args.history_command == "best":
+                record = history.best(args.kernel, like_id=args.like)
+                if record is None:
+                    print("gk: no checked bench record matches", file=sys.stderr)
+                    return 1
+                _print_record_line(record)
+            elif args.history_command == "diff":
+                result = history.diff(args.id_a, args.id_b)
+                print(f"Diff {result['a']} -> {result['b']}")
+                if result["comparable"]:
+                    print("Comparable: yes")
+                else:
+                    print("Comparable: NO - performance change is not a direct optimization gain")
+                    for reason in result["reasons"]:
+                        print(f"  - {reason}")
+                print("Metrics (a -> b):")
+                for name in METRICS:
+                    metric = result["metrics"][name]
+                    change = metric["change_pct"]
+                    suffix = f" ({change:+.2f}%)" if change is not None else ""
+                    print(f"  {name}: {_fmt(metric['a'])} -> {_fmt(metric['b'])}{suffix}")
+                for label, text in (("Kernel", result["kernel_diff"]),
+                                    ("Eval", result["eval_diff"])):
+                    print(f"{label} source: {'changed' if text else 'unchanged'}")
+                    if text:
+                        print(text, end="" if text.endswith("\n") else "\n")
+        except (OSError, ValueError) as exc:
+            print(f"gk: {exc}", file=sys.stderr)
+            return 1
+        return 0
+
     return 1
+
+
+def _fmt(value) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:.6f}" if isinstance(value, float) else str(value)
+
+
+def _print_record_line(record: dict) -> None:
+    bench = record.get("bench") or {}
+    time_ms = bench.get("device_time_ms")
+    print("  ".join([
+        record["id"],
+        record.get("timestamp", ""),
+        f"{record.get('status')}",
+        f"{time_ms:.6f} ms" if time_ms is not None else "n/a",
+        f"kernel {record.get('kernel_source_hash', '')[:8]}",
+        f"eval {record.get('eval_source_hash', '')[:8]}",
+        record.get("note") or "",
+    ]).rstrip())
