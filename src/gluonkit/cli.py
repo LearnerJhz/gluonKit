@@ -8,9 +8,10 @@ from gluonkit.interfaces.types import ProbeResult
 from gluonkit.output import capture_run, emit_json
 
 
-def _configure_triton_cache() -> None:
-    """Point TRITON_CACHE_DIR to project-local .gluonkit/triton_cache for sandbox compatibility."""
+def _configure_env() -> None:
+    """Configure local Triton cache and suppress Kineto USDT stderr logs before torch/triton init."""
     os.environ["TRITON_CACHE_DIR"] = str((Path.cwd() / ".gluonkit" / "triton_cache").resolve())
+    os.environ.setdefault("KINETO_LOG_LEVEL", "6")
 
 
 def _run_probe() -> ProbeResult:
@@ -51,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
     bench_parser.add_argument("--no-baseline", action="store_true", help="Do not measure ref")
 
     args = parser.parse_args(argv)
-    _configure_triton_cache()
+    _configure_env()
 
     if args.command == "probe":
         return emit_json(capture_run(_run_probe))
