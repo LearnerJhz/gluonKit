@@ -1,5 +1,41 @@
-from dataclasses import asdict, dataclass, field
-from typing import Literal
+from dataclasses import asdict, dataclass, is_dataclass
+from pathlib import Path
+from typing import Any, Literal
+
+
+def _to_json_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Path):
+        return str(value)
+    if is_dataclass(value) and not isinstance(value, type):
+        return _to_json_value(asdict(value))
+    if isinstance(value, dict):
+        return {key: _to_json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_json_value(item) for item in value]
+    if hasattr(value, "to_dict") and callable(value.to_dict):
+        return _to_json_value(value.to_dict())
+    return value
+
+
+@dataclass
+class Output:
+    """Unified JSON output envelope: only `result` and `info`."""
+
+    result: Literal["success", "failed"]
+    info: Any = None
+
+    @classmethod
+    def ok(cls, info: Any = None) -> "Output":
+        return cls(result="success", info=info)
+
+    @classmethod
+    def fail(cls, info: str) -> "Output":
+        return cls(result="failed", info=info)
+
+    def to_dict(self) -> dict:
+        return {"result": self.result, "info": _to_json_value(self.info)}
 
 # gk probe 信息
 @dataclass
@@ -12,29 +48,6 @@ class ProbeResult:
     smem_per_block_optin: int | None
     sm_count: int
     vram_bytes: int
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-# gk compile 信息
-@dataclass
-class CompileResult:
-    result: Literal["success", "failed"]
-    info: str | None = None
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-
-@dataclass
-class DumpInfoResult(CompileResult):
-    artifacts: dict[str, dict[str, str | None]] = field(default_factory=dict)
-
-# gk check 信息
-@dataclass
-class CheckResult:
-    passed: bool
-    error: str | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
