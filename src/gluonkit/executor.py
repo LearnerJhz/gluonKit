@@ -45,11 +45,16 @@ def _prepare_task(eval_path: str) -> tuple[Path, NvidiaBackend, dict]:
     return path, backend, load_task(str(path), backend.device)
 
 
+def _runtime_dir(*parts: str) -> Path:
+    """Resolve a runtime subdirectory under project-local `.gluonkit/`."""
+    return (Path.cwd() / ".gluonkit").joinpath(*parts).resolve()
+
+
 def run_dump_info(eval_path: str) -> Output:
     """Execute run() once and export backend analysis artifacts and summary."""
     def _run() -> dict:
         path, backend, task = _prepare_task(eval_path)
-        return backend.dump_info(task["run"], Path("dumpInfo").resolve() / path.stem)
+        return backend.dump_info(task["run"], _runtime_dir("dump_info", path.stem))
 
     return capture_run(_run)
 
@@ -108,8 +113,8 @@ def run_bench(eval_path: str, *, trace: bool = False, no_baseline: bool = False,
         trace_dir = None
         trace_path = None
         if trace:
-            root = Path("runs").resolve()
-            root.mkdir(exist_ok=True)
+            root = _runtime_dir("runs")
+            root.mkdir(parents=True, exist_ok=True)
             trace_dir = Path(tempfile.mkdtemp(prefix="bench-", dir=root))
             trace_path = str(trace_dir / "trace.json")
         try:
