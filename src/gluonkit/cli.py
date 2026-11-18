@@ -30,17 +30,16 @@ def main(argv: list[str] | None = None) -> int:
     layout_parser.add_argument("--shape", required=True, help="Tensor dimensions, e.g. 64,64")
     layout_parser.add_argument("--hardware", action="store_true", help="Group coordinates by warp/thread")
 
-    compile_parser = commands.add_parser("compile", help="Run an evaluation script to trigger JIT compilation")
-    compile_parser.add_argument("eval_path", help="Python script defining prepare(device)")
-
     dump_parser = commands.add_parser("dump-info", help="Run once and export backend analysis information")
     dump_parser.add_argument("eval_path", help="Python script defining prepare(device)")
 
-    check_parser = commands.add_parser("check", help="Check an evaluation script for correctness")
+    check_parser = commands.add_parser("check", help="Compile (JIT) and check correctness against ref")
     check_parser.add_argument("eval_path", help="Python script defining prepare(device)")
 
-    bench_parser = commands.add_parser("bench", help="Measure mean GPU kernel time")
-    bench_parser.add_argument("eval_path", help="Python script defining prepare(device)")
+    bench_parser = commands.add_parser("bench", help="Measure mean GPU kernel time and record it in history")
+    bench_parser.add_argument("eval_path", help="Python script defining prepare(device) and KERNEL_PATH")
+    bench_parser.add_argument("--note", help="What changed and why (stored in history)")
+    bench_parser.add_argument("--parent", help="Parent history record id")
     bench_parser.add_argument("--trace", action="store_true", help="Export measured run's Chrome trace")
     bench_parser.add_argument("--no-baseline", action="store_true", help="Do not measure ref")
 
@@ -51,11 +50,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "layout":
         return emit_json(capture_run(lambda: _run_layout(args.expression, args.shape, args.hardware)))
-
-    if args.command == "compile":
-        from gluonkit.executor import run_compile
-
-        return emit_json(run_compile(args.eval_path))
 
     if args.command == "dump-info":
         from gluonkit.executor import run_dump_info
@@ -70,6 +64,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "bench":
         from gluonkit.executor import run_bench
 
-        return emit_json(run_bench(args.eval_path, trace=args.trace, no_baseline=args.no_baseline))
+        return emit_json(run_bench(args.eval_path, trace=args.trace, no_baseline=args.no_baseline,
+                                   note=args.note, parent_id=args.parent))
 
     return 1

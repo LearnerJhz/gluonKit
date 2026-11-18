@@ -26,9 +26,8 @@ def comparable_key(record: dict) -> str:
 
 
 def is_rankable(record: dict) -> bool:
-    check = record.get("check") or {}
-    bench = record.get("bench") or {}
-    return check.get("passed") is True and bench.get("device_time_ms") is not None
+    # Records are only written by successful `gk bench`; correctness is `gk check`'s job.
+    return (record.get("bench") or {}).get("device_time_ms") is not None
 
 
 class History:
@@ -93,7 +92,7 @@ class History:
         return records
 
     def best(self, kernel: str | Path | None = None, like_id: str | None = None) -> dict | None:
-        """Fastest checked record within one strictly comparable group.
+        """Fastest record within one strictly comparable group.
 
         Raises ValueError when several comparable groups exist and like_id is not given.
         """
@@ -136,7 +135,7 @@ class History:
             reasons.append("device_name differs")
         for record in (a, b):
             if not is_rankable(record):
-                reasons.append(f"{record['id']} has no checked bench result")
+                reasons.append(f"{record['id']} has no bench result")
 
         def source_diff(field: str, path_field: str) -> str:
             if a.get(field) == b.get(field):
