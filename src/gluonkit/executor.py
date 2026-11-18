@@ -9,11 +9,10 @@ import tempfile
 import traceback
 
 from gluonkit.backends.nvidia.backend import NvidiaBackend
-from gluonkit.backends.nvidia.compiler import export_ir
 from gluonkit.core.checker import check_task
 from gluonkit.core.bencher import DEFAULT_ITERS, DEFAULT_WARMUP, bench_task
 from gluonkit.core.history import History
-from gluonkit.interfaces.types import BenchResult, CheckResult, CompileError, CompileResult
+from gluonkit.interfaces.types import BenchResult, CheckResult, CompileResult, DumpInfoResult
 
 
 def load_task(eval_path: str, device: str) -> dict:
@@ -34,22 +33,34 @@ def load_task(eval_path: str, device: str) -> dict:
 
 
 def run_compile(eval_path: str) -> CompileResult:
-    path = Path(eval_path).resolve()
-    if not path.is_file():
-        raise ValueError(f"Evaluation script not found: {path}")
     try:
+        path = Path(eval_path).resolve()
+        if not path.is_file():
+            raise ValueError(f"Evaluation script not found: {path}")
         backend = NvidiaBackend()
         available, reason = backend.available()
         if not available:
             raise RuntimeError(reason)
         task = load_task(str(path), backend.device)
-        root = Path("runs").resolve()
-        root.mkdir(exist_ok=True)
-        directory = Path(tempfile.mkdtemp(prefix="compile-", dir=root))
-        artifacts = export_ir(task["run"], directory / "artifacts")
-        return CompileResult(ok=True, errors=[], artifacts=artifacts)
+        task["run"]()
+        return CompileResult(result="success")
     except Exception:
-        return CompileResult(ok=False, errors=[CompileError(traceback.format_exc())])
+        return CompileResult(result="failed", info=traceback.format_exc())
+
+
+def run_dump_info(eval_path: str) -> DumpInfoResult:
+    """Run the selected task and ask its backend to export analysis artifacts."""
+    try:
+        path = Path(eval_path).resolve()
+        backend = NvidiaBackend()
+        available, reason = backend.available()
+        if not available:
+            raise RuntimeError(reason)
+        task = load_task(str(path), backend.device)
+        artifacts = backend.dump_info(task["run"], Path("dumpInfo").resolve() / path.stem)
+        return DumpInfoResult(result="success", artifacts=artifacts)
+    except Exception:
+        return DumpInfoResult(result="failed", info=traceback.format_exc())
 
 
 def run_check(eval_path: str) -> CheckResult:
@@ -173,11 +184,11 @@ def run_pipeline(eval_path: str, *, note: str | None = None, parent_id: str | No
     try:
         try:
             task = load_task(str(snapshot_eval), backend.device)
-            artifacts = export_ir(task["run"], run_dir / "artifacts")
-            record["compile"] = CompileResult(ok=True, errors=[], artifacts=artifacts).to_dict()
+            task["run"]()
+            record["compile"] = CompileResult(result="success").to_dict()
         except Exception:
             record["compile"] = CompileResult(
-                ok=False, errors=[CompileError(traceback.format_exc())]).to_dict()
+                result="failed", info=traceback.format_exc()).to_dict()
             record["status"] = "compile_failed"
             return history.save(record)
 

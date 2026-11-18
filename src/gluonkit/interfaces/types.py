@@ -1,4 +1,5 @@
 from dataclasses import asdict, dataclass, field
+from typing import Literal
 
 # gk probe 信息
 @dataclass
@@ -17,18 +18,17 @@ class ProbeResult:
 
 # gk compile 信息
 @dataclass
-class CompileError:
-    message: str
-
-
-@dataclass
 class CompileResult:
-    ok: bool
-    errors: list[CompileError]
-    artifacts: dict[str, dict[str, str | None]] = field(default_factory=dict)
+    result: Literal["success", "failed"]
+    info: str | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+@dataclass
+class DumpInfoResult(CompileResult):
+    artifacts: dict[str, dict[str, str | None]] = field(default_factory=dict)
 
 # gk check 信息
 @dataclass

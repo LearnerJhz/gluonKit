@@ -1,4 +1,5 @@
 from typing import Callable
+from pathlib import Path
 
 from gluonkit.interfaces.backend import Backend
 from gluonkit.interfaces.types import ProbeResult, ProfileData
@@ -28,6 +29,13 @@ class NvidiaBackend(Backend):
         from .layout import render_layout
 
         return render_layout(expression, shape, hardware)
+
+    def dump_info(
+        self, fn: Callable[[], object], output_dir: str | Path,
+    ) -> dict[str, dict[str, str | None]]:
+        from .dump_info import export_ir
+
+        return export_ir(fn, output_dir)
 
     def profile(
         self, fn: Callable[[], object], iters: int, warmup: int, *,

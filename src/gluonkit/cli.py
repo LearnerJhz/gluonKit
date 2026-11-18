@@ -22,6 +22,9 @@ def main(argv: list[str] | None = None) -> int:
     compile_parser.add_argument("eval_path", help="Python script defining prepare(device)")
     compile_parser.add_argument("--json", action="store_true", help="Output JSON")
 
+    dump_parser = commands.add_parser("dumpInfo", help="Run once and export backend analysis information")
+    dump_parser.add_argument("eval_path", help="Python script defining prepare(device)")
+
     check_parser = commands.add_parser("check", help="Check an evaluation script for correctness")
     check_parser.add_argument("eval_path", help="Python script defining prepare(device)")
 
@@ -100,17 +103,20 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         if args.json:
             print(json.dumps(result.to_dict(), ensure_ascii=False))
-        if not result.ok:
-            for error in result.errors:
-                print(error.message, file=sys.stderr)
+        if result.result == "failed":
+            if not args.json:
+                print(result.info, file=sys.stderr)
             return 1
         if not args.json:
             print("Compile succeeded")
-            for key, paths in result.artifacts.items():
-                print(f"IR ({key}):")
-                for extension, path in paths.items():
-                    print(f"  {extension}: {path or 'unavailable'}")
         return 0
+
+    if args.command == "dumpInfo":
+        from gluonkit.executor import run_dump_info
+
+        result = run_dump_info(args.eval_path)
+        print(json.dumps(result.to_dict(), ensure_ascii=False))
+        return 0 if result.result == "success" else 1
 
     if args.command == "check":
         from gluonkit.executor import run_check
@@ -164,10 +170,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"gk: {exc}", file=sys.stderr)
             return 1
         compile_result, check, bench = record["compile"], record["check"], record["bench"]
-        print(f"Compile: {'ok' if compile_result['ok'] else 'failed'}")
-        if not compile_result["ok"]:
-            for error in compile_result["errors"]:
-                print(error["message"], file=sys.stderr)
+        print(f"Compile: {'ok' if compile_result['result'] == 'success' else 'failed'}")
+        if compile_result["result"] == "failed":
+            print(compile_result["info"], file=sys.stderr)
         if check is not None:
             print(f"Check: {'passed' if check['passed'] else 'failed'}")
             if check["error"]:
