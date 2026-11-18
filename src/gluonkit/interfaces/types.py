@@ -63,6 +63,9 @@ class ProfileKernel:
 class ProfileData:
     device_time_ms: float          # GPU kernel 总耗时 (ms)
     kernels: list[ProfileKernel]   # 内部已聚合好的 kernel 列表
+    std_ms: float = 0.0
+    min_ms: float = 0.0
+    median_ms: float = 0.0
     trace_path: str | None = None
 
     def to_dict(self) -> dict:
@@ -73,6 +76,9 @@ class ProfileData:
 class BenchResult:
     device_time_ms: float
     kernels: list[ProfileKernel]
+    std_ms: float = 0.0
+    min_ms: float = 0.0
+    median_ms: float = 0.0
     baseline_time_ms: float | None = None
     speedup_vs_baseline: float | None = None
     tflops: float | None = None

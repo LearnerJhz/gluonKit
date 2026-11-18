@@ -1,6 +1,7 @@
 """NVIDIA timing primitives. No aggregation policy or automatic fallback here."""
 
 from pathlib import Path
+import statistics
 from typing import Callable
 from uuid import uuid4
 
@@ -38,13 +39,13 @@ def flush_cache(device: str = "cuda:0") -> None:
 
 
 def _collect_kernels(events, markers: dict[str, int], cache_marker: str,
-                     device_index: int, iters: int) -> tuple[float, list[ProfileKernel]]:
+                     device_index: int, iters: int) -> tuple[list[float], list[ProfileKernel]]:
     """Join CUDA events to CPU scopes by correlation IDs, never GPU time windows.
 
     Torch ops use linked_correlation_id; direct Gluon launches use the same
     correlation id as their CUDA runtime/driver launch. Count raw kernel
     events once, excluding copies, memsets and GPU annotation ranges, and
-    aggregate average timings across iterations.
+    return per-iteration durations plus aggregated kernel stats.
     """
     from torch.autograd import DeviceType
 
@@ -57,7 +58,7 @@ def _collect_kernels(events, markers: dict[str, int], cache_marker: str,
                 if event.activity_type in ("cpu_op", "user_annotation")}
     launches = {event.id: event for event in cpu_events
                 if event.activity_type in ("cuda_runtime", "cuda_driver")}
-    total_ms = 0.0
+    per_iter_ms = [0.0] * iters
     grouped: dict[str, list[float]] = {}
     for event in events:
         if (event.device_type != DeviceType.CUDA or
@@ -68,9 +69,10 @@ def _collect_kernels(events, markers: dict[str, int], cache_marker: str,
         while parent is not None:
             if parent.name == cache_marker:
                 break
-            if parent.name in markers:
+            iter_idx = markers.get(parent.name)
+            if iter_idx is not None:
                 duration_ms = event.time_range.elapsed_us() / 1000
-                total_ms += duration_ms
+                per_iter_ms[iter_idx] += duration_ms
                 grouped.setdefault(event.name, []).append(duration_ms)
                 break
             parent = parent.cpu_parent
@@ -81,7 +83,7 @@ def _collect_kernels(events, markers: dict[str, int], cache_marker: str,
         ProfileKernel(name=name, avg_ms=sum(durations) / len(durations))
         for name, durations in grouped.items()
     ]
-    return total_ms / iters, kernels
+    return per_iter_ms, kernels
 
 
 def profile(
@@ -119,13 +121,24 @@ def profile(
                 with torch.profiler.record_function(marker):
                     fn()
                     torch.cuda.synchronize(device)
-        device_time_ms, kernels = _collect_kernels(
+        per_iter_ms, kernels = _collect_kernels(
             capture.events(), markers, cache_marker, device_index, iters,
         )
+        device_time_ms = statistics.fmean(per_iter_ms)
+        std_ms = statistics.stdev(per_iter_ms) if len(per_iter_ms) > 1 else 0.0
+        min_ms = min(per_iter_ms)
+        median_ms = statistics.median(per_iter_ms)
         exported = None
         if trace_path is not None:
             path = Path(trace_path).expanduser().resolve()
             path.parent.mkdir(parents=True, exist_ok=True)
             capture.export_chrome_trace(str(path))
             exported = str(path)
-    return ProfileData(device_time_ms=device_time_ms, kernels=kernels, trace_path=exported)
+    return ProfileData(
+        device_time_ms=device_time_ms,
+        kernels=kernels,
+        std_ms=std_ms,
+        min_ms=min_ms,
+        median_ms=median_ms,
+        trace_path=exported,
+    )

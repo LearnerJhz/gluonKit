@@ -11,15 +11,81 @@ def _metadata_value(metadata: Any, attr: str) -> Any:
     return getattr(metadata, attr, None)
 
 
+def _align_up(value: int, alignment: int) -> int:
+    return ((value + alignment - 1) // alignment) * alignment
+
+
+def _device_attr(driver: Any, attr: Any, device: Any, default: int | None = None) -> int | None:
+    rc, val = driver.cuDeviceGetAttribute(attr, device)
+    return int(val) if rc == driver.CUresult.CUDA_SUCCESS else default
+
+
+def _func_attr(driver: Any, attr: Any, func: Any, default: int = 0) -> int:
+    rc, val = driver.cuFuncGetAttribute(attr, func)
+    return int(val) if rc == driver.CUresult.CUDA_SUCCESS else default
+
+
+def _occupancy_summary(
+    kernel: Any,
+    shared_bytes: int | None,
+    num_warps: int | None,
+) -> dict[str, Any]:
+    """Compute true SM occupancy and allocated shared memory via the CUDA driver."""
+    empty = {
+        "allocated_shared_bytes": None,
+        "blocks_per_sm": None,
+        "occupancy_pct": None,
+    }
+    func_ptr = getattr(kernel, "function", None)
+    if not func_ptr or num_warps is None or num_warps <= 0:
+        return empty
+    try:
+        from cuda.bindings import driver
+    except ImportError:
+        return empty
+
+    rc, device = driver.cuCtxGetDevice()
+    if rc != driver.CUresult.CUDA_SUCCESS:
+        return empty
+
+    attr = driver.CUdevice_attribute
+    warp_size = _device_attr(driver, attr.CU_DEVICE_ATTRIBUTE_WARP_SIZE, device, 32)
+    cc_major = _device_attr(driver, attr.CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device, 8)
+    max_threads_per_sm = _device_attr(driver, attr.CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_MULTIPROCESSOR, device)
+    reserved_smem = _device_attr(driver, attr.CU_DEVICE_ATTRIBUTE_RESERVED_SHARED_MEMORY_PER_BLOCK, device, 0)
+    if None in (warp_size, max_threads_per_sm):
+        return empty
+
+    func = driver.CUfunction(func_ptr)
+    dynamic_smem = int(shared_bytes or 0)
+    static_smem = _func_attr(driver, driver.CUfunction_attribute.CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, func, 0)
+    block_threads = num_warps * warp_size
+
+    rc, blocks_per_sm = driver.cuOccupancyMaxActiveBlocksPerMultiprocessor(func, block_threads, dynamic_smem)
+    if rc != driver.CUresult.CUDA_SUCCESS:
+        return empty
+
+    smem_gran = 128 if (cc_major or 8) >= 8 else 256
+    allocated_smem = _align_up(static_smem + dynamic_smem + (reserved_smem or 0), smem_gran)
+    return {
+        "allocated_shared_bytes": allocated_smem,
+        "blocks_per_sm": blocks_per_sm,
+        "occupancy_pct": (blocks_per_sm * block_threads) / max_threads_per_sm * 100,
+    }
+
+
 def _kernel_summary(kernel: Any) -> dict[str, Any]:
     """Collect NVIDIA/Triton kernel resource summary after handle initialization."""
     metadata = getattr(kernel, "metadata", None)
+    shared_bytes = _metadata_value(metadata, "shared")
+    num_warps = _metadata_value(metadata, "num_warps")
     return {
         "n_regs": getattr(kernel, "n_regs", None),
         "n_spills": getattr(kernel, "n_spills", None),
         "n_max_threads": getattr(kernel, "n_max_threads", None),
-        "shared_bytes": _metadata_value(metadata, "shared"),
-        "num_warps": _metadata_value(metadata, "num_warps"),
+        "shared_bytes": shared_bytes,
+        "num_warps": num_warps,
+        **_occupancy_summary(kernel, shared_bytes, num_warps),
     }
 
 
