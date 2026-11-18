@@ -52,11 +52,10 @@ def run_compile(eval_path: str) -> Output:
 
 
 def run_dump_info(eval_path: str) -> Output:
-    """Execute run() once and export backend IR artifacts."""
+    """Execute run() once and export backend analysis artifacts and summary."""
     def _run() -> dict:
         path, backend, task = _prepare_task(eval_path)
-        artifacts = backend.dump_info(task["run"], Path("dumpInfo").resolve() / path.stem)
-        return {"artifacts": artifacts}
+        return backend.dump_info(task["run"], Path("dumpInfo").resolve() / path.stem)
 
     return capture_run(_run)
 

@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Any, Callable
 from pathlib import Path
 
 from gluonkit.interfaces.backend import Backend
@@ -32,10 +32,10 @@ class NvidiaBackend(Backend):
 
     def dump_info(
         self, fn: Callable[[], object], output_dir: str | Path,
-    ) -> dict[str, dict[str, str | None]]:
-        from .dump_info import export_ir
+    ) -> dict[str, Any]:
+        from .dump_info import dump_info
 
-        return export_ir(fn, output_dir)
+        return dump_info(fn, output_dir)
 
     def profile(
         self, fn: Callable[[], object], iters: int, warmup: int, *,

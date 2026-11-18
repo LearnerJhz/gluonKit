@@ -1,4 +1,4 @@
-from typing import Callable, Protocol
+from typing import Any, Callable, Protocol
 from pathlib import Path
 
 from .types import ProbeResult, ProfileData
@@ -17,7 +17,7 @@ class Backend(Protocol):
 
     def dump_info(
         self, fn: Callable[[], object], output_dir: str | Path,
-    ) -> dict[str, dict[str, str | None]]: ...
+    ) -> dict[str, Any]: ...
 
     def profile(
         self, fn: Callable[[], object], iters: int, warmup: int, *,

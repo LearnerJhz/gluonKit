@@ -33,7 +33,7 @@ def main(argv: list[str] | None = None) -> int:
     compile_parser = commands.add_parser("compile", help="Run an evaluation script to trigger JIT compilation")
     compile_parser.add_argument("eval_path", help="Python script defining prepare(device)")
 
-    dump_parser = commands.add_parser("dumpInfo", help="Run once and export backend analysis information")
+    dump_parser = commands.add_parser("dump-info", help="Run once and export backend analysis information")
     dump_parser.add_argument("eval_path", help="Python script defining prepare(device)")
 
     check_parser = commands.add_parser("check", help="Check an evaluation script for correctness")
@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
 
         return emit_json(run_compile(args.eval_path))
 
-    if args.command == "dumpInfo":
+    if args.command == "dump-info":
         from gluonkit.executor import run_dump_info
 
         return emit_json(run_dump_info(args.eval_path))
