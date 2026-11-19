@@ -30,6 +30,13 @@ class NvidiaBackend(Backend):
 
         return render_layout(expression, shape, hardware)
 
+    def bank_conflicts(
+        self, register_layout: str, shared_layout: str, shape: list[int], dtype: str,
+    ) -> dict[str, int]:
+        from .bank_conflicts import bank_conflicts
+
+        return bank_conflicts(register_layout, shared_layout, shape, dtype)
+
     def dump_info(
         self, fn: Callable[[], object], output_dir: str | Path,
     ) -> dict[str, Any]:

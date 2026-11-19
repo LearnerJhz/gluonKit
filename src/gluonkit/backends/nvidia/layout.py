@@ -2,11 +2,7 @@ import ast
 import math
 
 
-def render_layout(expression: str, shape: list[int], hardware: bool = False) -> str:
-    from triton.experimental.gluon.language import BlockedLayout, SliceLayout
-
-    constructors = {"BlockedLayout": BlockedLayout, "SliceLayout": SliceLayout}
-
+def parse_layout(expression: str, constructors: dict[str, type]):
     def parse(node):
         if isinstance(node, ast.Constant) and type(node.value) is int:
             return node.value
@@ -18,10 +14,16 @@ def render_layout(expression: str, shape: list[int], hardware: bool = False) -> 
                 kwargs = {kw.arg: parse(kw.value) for kw in node.keywords}
                 if len(kwargs) != len(node.keywords):
                     raise ValueError("Duplicate layout keyword argument")
-                layout = constructors[node.func.id](*args, **kwargs)
-                validate(layout)
-                return layout
-        raise ValueError("Only BlockedLayout, SliceLayout, integer literals and lists/tuples are allowed")
+                return constructors[node.func.id](*args, **kwargs)
+        raise ValueError(f"Only {', '.join(constructors)}, integer literals and lists/tuples are allowed")
+
+    return parse(ast.parse(expression, mode="eval").body)
+
+
+def render_layout(expression: str, shape: list[int], hardware: bool = False) -> str:
+    from triton.experimental.gluon.language import BlockedLayout, SliceLayout
+
+    constructors = {"BlockedLayout": BlockedLayout, "SliceLayout": SliceLayout}
 
     def powers_of_two(values):
         return isinstance(values, list) and bool(values) and all(
@@ -47,13 +49,14 @@ def render_layout(expression: str, shape: list[int], hardware: bool = False) -> 
         elif isinstance(layout, SliceLayout):
             if not isinstance(layout.parent, (BlockedLayout, SliceLayout)):
                 raise ValueError("SliceLayout parent must be a supported layout")
+            validate(layout.parent)
             if type(layout.dim) is not int or not 0 <= layout.dim < layout.parent.rank:
                 raise ValueError("SliceLayout dim is outside the parent rank")
         else:
             raise ValueError("Expression must construct a supported layout")
 
     try:
-        layout = parse(ast.parse(expression, mode="eval").body)
+        layout = parse_layout(expression, constructors)
         validate(layout)
         if not powers_of_two(shape):
             raise ValueError("shape dimensions must be positive powers of two")

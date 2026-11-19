@@ -27,6 +27,13 @@ def _run_layout(expression: str, shape_arg: str, hardware: bool) -> str:
     return NvidiaBackend().layout(expression, shape, hardware)
 
 
+def _run_bank_conflicts(
+    register_layout: str, shared_layout: str, shape_arg: str, dtype: str,
+) -> dict[str, int]:
+    shape = [int(dim.strip()) for dim in shape_arg.split(",")]
+    return NvidiaBackend().bank_conflicts(register_layout, shared_layout, shape, dtype)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="gk", description="Gluon kernel tools")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -37,6 +44,18 @@ def main(argv: list[str] | None = None) -> int:
     layout_parser.add_argument("expression", help="BlockedLayout(...) or SliceLayout(...)")
     layout_parser.add_argument("--shape", required=True, help="Tensor dimensions, e.g. 64,64")
     layout_parser.add_argument("--hardware", action="store_true", help="Group coordinates by warp/thread")
+
+    bank_parser = commands.add_parser(
+        "bank-conflicts", help="Count shared-memory bank conflicts (no GPU required)",
+        description="Report excess shared-memory accesses per wavefront; 0 means no bank conflicts.",
+    )
+    bank_parser.add_argument(
+        "--register-layout", required=True,
+        help="BlockedLayout(...), SliceLayout(...), DotOperandLayout(...) or NVMMADistributedLayout(...)",
+    )
+    bank_parser.add_argument("--shared-layout", required=True, help="SwizzledSharedLayout(...)")
+    bank_parser.add_argument("--shape", required=True, help="Tensor dimensions, e.g. 64,32")
+    bank_parser.add_argument("--dtype", required=True, help="Gluon element type, e.g. float16 or float32")
 
     dump_parser = commands.add_parser("dump-info", help="Run once and export backend analysis information")
     dump_parser.add_argument("eval_path", help="Python script defining prepare(device)")
@@ -59,6 +78,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "layout":
         return emit_json(capture_run(lambda: _run_layout(args.expression, args.shape, args.hardware)))
+
+    if args.command == "bank-conflicts":
+        return emit_json(capture_run(lambda: _run_bank_conflicts(
+            args.register_layout, args.shared_layout, args.shape, args.dtype,
+        )))
 
     if args.command == "dump-info":
         from gluonkit.executor import run_dump_info

@@ -15,6 +15,10 @@ class Backend(Protocol):
 
     def layout(self, expression: str, shape: list[int], hardware: bool = False) -> str: ...
 
+    def bank_conflicts(
+        self, register_layout: str, shared_layout: str, shape: list[int], dtype: str,
+    ) -> dict[str, int]: ...
+
     def dump_info(
         self, fn: Callable[[], object], output_dir: str | Path,
     ) -> dict[str, Any]: ...
