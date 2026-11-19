@@ -69,9 +69,14 @@ from triton.experimental.gluon.language.nvidia.ampere import async_copy, mma_v2
 
 ## 核实未知 API（严禁凭记忆编造）
 
-遇到不确定签名或其它子模块（如 `mbarrier`、`PaddedSharedLayout`），直接运行：
+遇到不确定签名或其它后端子模块（如 `mbarrier`、`PaddedSharedLayout`、或其它架构子模块），优先使用内置自省脚本现场查询当前环境：
 ```bash
-.venv/bin/python -c "import inspect, triton.experimental.gluon.language as gl; print(inspect.signature(gl.<名称>))"
+# 列出 gl 或指定后端子模块的全部可用原语、Layout 与子模块
+.venv/bin/python .agents/skills/gluon-api/scripts/introspect.py --list [module]
+
+# 一次性查询多个符号的真实签名与首段 docstring
+.venv/bin/python .agents/skills/gluon-api/scripts/introspect.py max sum exp load
+.venv/bin/python .agents/skills/gluon-api/scripts/introspect.py -m language.nvidia.ampere mma_v2 async_copy.async_load
 ```
 源码目录：`.venv/lib/python3.12/site-packages/triton/experimental/gluon/`
 
