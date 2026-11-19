@@ -52,8 +52,3 @@ class NvidiaBackend(Backend):
 
         return profile(fn, iters, warmup, device=self.device,
                        flush_l2=flush_l2, trace_path=trace_path)
-
-    def flush_cache(self) -> None:
-        from .profiler import flush_cache
-
-        flush_cache(self.device)

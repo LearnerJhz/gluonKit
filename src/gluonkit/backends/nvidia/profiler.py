@@ -28,16 +28,6 @@ def _cache_buffer(device: str):
     return torch.empty(size, dtype=torch.uint8, device=device)
 
 
-def flush_cache(device: str = "cuda:0") -> None:
-    """Best-effort L2 eviction; return after the eviction writes complete."""
-    import torch
-
-    with torch.cuda.device(device):
-        buffer = _cache_buffer(device)
-        buffer.zero_()
-        torch.cuda.synchronize(device)
-
-
 def _collect_kernels(events, markers: dict[str, int], cache_marker: str,
                      device_index: int, iters: int) -> tuple[list[float], list[ProfileKernel]]:
     """Join CUDA events to CPU scopes by correlation IDs, never GPU time windows.
