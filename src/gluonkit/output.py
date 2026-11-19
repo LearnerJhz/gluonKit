@@ -3,11 +3,45 @@
 from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
+from math import isfinite
 import sys
 import traceback
 from typing import Any, Callable, TextIO
 
 from gluonkit.interfaces.types import Output
+
+_MS_KEYS = frozenset({"avg", "median", "min", "std", "avg_ms", "baseline_ms", "baseline_time_ms"})
+_PCT_KEYS = frozenset({"roofline", "roofline_pct", "occupancy_pct"})
+_RATIO_KEYS = frozenset({"speedup", "speedup_vs_baseline"})
+_RATE_KEYS = frozenset({"tflops", "gbps"})
+
+
+def _round_float(value: float, key: str | None = None) -> float:
+    """Round finite floats for CLI JSON readability without altering non-finite errors."""
+    if not isfinite(value):
+        return value
+    if key in _MS_KEYS:
+        ndigits = 6
+    elif key in _PCT_KEYS:
+        ndigits = 2
+    elif key in _RATIO_KEYS:
+        ndigits = 3
+    elif key in _RATE_KEYS:
+        ndigits = 2 if abs(value) >= 1 else 4
+    else:
+        ndigits = 6
+    rounded = round(value, ndigits)
+    return 0.0 if rounded == 0 else rounded
+
+
+def _format_floats(value: Any, key: str | None = None) -> Any:
+    if isinstance(value, float):
+        return _round_float(value, key)
+    if isinstance(value, dict):
+        return {k: _format_floats(v, k if isinstance(k, str) else None) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_format_floats(item) for item in value]
+    return value
 
 
 def format_error(
@@ -57,7 +91,8 @@ def capture_run(fn: Callable[[], Any]) -> Output:
 
 def render_json(output: Output) -> str:
     """Serialize an Output envelope as a single JSON string."""
-    return json.dumps(output.to_dict(), ensure_ascii=False, allow_nan=False)
+    payload = _format_floats(output.to_dict())
+    return json.dumps(payload, ensure_ascii=False, allow_nan=False)
 
 
 def emit_json(output: Output, stream: TextIO | None = None) -> int:
