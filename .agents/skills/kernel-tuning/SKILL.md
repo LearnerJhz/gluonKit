@@ -11,16 +11,18 @@ description: Systematic GPU kernel performance tuning loop using gk probe, check
    - `.venv/bin/gk probe`：记录 `arch`、`sm_count`、`smem_per_block_optin`（例如 RTX 3050 Laptop：`sm86`、`20` SM、`101376` bytes）。
 2. **建基线**
    - `.venv/bin/gk check <eval.py>` -> `.venv/bin/gk bench <eval.py> --note "baseline"` -> `.venv/bin/gk dump-info <eval.py>`
-   - 记录基线 `history_id`、`device_time_ms`、`std_ms`、`min_ms`、`median_ms`、`baseline_time_ms`、`speedup_vs_baseline` 以及 `summary`（`n_regs`、`n_spills`、`shared_bytes`、`allocated_shared_bytes`、`num_warps`、`blocks_per_sm`、`occupancy_pct`；注意不要只看 `n_max_threads` 误判并发）。
+   - 记录基线 `history_id`、`kernel.name`、`kernel.avg`、`kernel.std`、`kernel.min`、`kernel.median`、`baseline.avg_ms`、`metrics.speedup` 以及 `summary`（`n_regs`、`n_spills`、`shared_bytes`、`allocated_shared_bytes`、`num_warps`、`blocks_per_sm`、`occupancy_pct`；注意不要只看 `n_max_threads` 误判并发）。
    - `gk` 将 Triton 编译缓存固定写入 `.gluonkit/triton_cache`（沙盒可直接写入）；首次编译略慢，后续仅在算子源码或编译常量变化时重编（需要强制重编可传 `TRITON_ALWAYS_COMPILE=1`）。
 3. **提假设并单点改动**
    - 每次只改一个明确变量（例如只改 tile size，或只改 pipeline stage 数），记录“改了什么、预期改善什么”。
 4. **先校验后测速（不可跳过）**
-   - 先跑 `.venv/bin/gk check <eval.py>`；失败立即修复或回退，禁止跳过 `check` 直接测速。
+   - 每次修改后都用同一条 `.venv/bin/gk check <eval.py>` 验证约定的主用例，按原评测的容差与 `ref()` 比较。校验失败先修复或回退。
+   - **按算子的输入约定决定是否补测。** 若 shape、dtype 和布局固定，主用例通过即可，无需另测奇数宽度。若算子承诺支持任意行宽，本轮又修改了尾块处理，就补测一个不能被 tile 宽度整除的行宽。若补测发现 bug，把能复现它的输入留作普通回归测试。
+   - 按实际输入和本轮 tile 逐维判断边界。例如当前 GEMM 的 `K=512`、`BK=32`，恰有 16 个完整 K tile，可以省去 K 尾块 mask。流水线收尾仍要等待并消费最后已预取的 tile，才能累加完整的 K 维。调整 tile 后重新检查整除关系和访存对齐，对实际出现的尾块保留保护。
    - 再跑 `.venv/bin/gk bench <eval.py> --note "<改动说明>" --parent <上次id>`。
 5. **噪声判断与留存**
-   - 结合 `gk bench` 返回的 `std_ms`、`min_ms`、`median_ms` 判断波动显著性（例如对比均值差与 `std_ms`，以及 `median_ms` 与 `device_time_ms` 是否存在长尾离群）。
-   - **判断阈值：单次改动提速小于 2%–3% 或未显著超出测量标准差 `std_ms` 时不算确认收益**；若接近临界值，连续复测 2–3 次观察稳定性。
+   - 结合 `gk bench` 返回的 `kernel.std`、`kernel.min`、`kernel.median` 判断波动显著性（例如对比均值差与 `kernel.std`，以及 `kernel.median` 与 `kernel.avg` 是否存在长尾离群）。
+   - **判断阈值：单次改动提速小于 2%–3% 或未显著超出测量标准差 `kernel.std` 时不算确认收益**；若接近临界值，连续复测 2–3 次观察稳定性。
    - 确认明显更快 -> 保留（建议用 `git` 记录版本）；变慢或无效 -> 立即回退，切下一个假设。
 6. **按需诊断**
    - 性能未按预期提升时跑 `gk dump-info <eval.py>` 检查资源摘要和导出的 `ttgir`/`llir`/`ptx`；需要看硬件发射、流间空隙或确认并发受限因子（`limitingFactors`）时跑 `gk bench <eval.py> --trace`。
@@ -35,7 +37,7 @@ description: Systematic GPU kernel performance tuning loop using gk probe, check
 | `ttgir` 中循环内存在多余 `convert_layout` | 寄存器布局不匹配触发隐藏 smem 中转或高开销指令 | 统一加载、计算、写回的 layout 链路，尽量把转换推到循环外（如 epilogue） |
 | 多级预取在主循环每步都执行 `wait_group(0)` | 消费最早 tile 前等待了所有已提交的拷贝 | 按提交与消费的次序设置等待深度，见下方环形预取示例 |
 | 访存吞吐低 / shared memory bank conflict | 加载向量化不足或 smem 布局冲突 | 调整 `BlockedLayout` 连续维 `size_per_thread`（如 128-bit = 8 个 fp16）；调整 `SwizzledSharedLayout` 参数（可用 `gl.bank_conflicts` 验证） |
-| `tflops` 远低于参考实现且无 spill | Tile 过小、数据复用低或 SM wave 利用不均 | 增大 `BM`/`BN`/`BK`（如 `64x64x32`、`64x128x32`、`128x64x32`）并匹配 `warps_per_cta`；核对 grid 与 `sm_count`（20 SM）匹配度 |
+| `metrics.tflops` 远低于参考实现且无 spill | Tile 过小、数据复用低或 SM wave 利用不均 | 增大 `BM`/`BN`/`BK`（如 `64x64x32`、`64x128x32`、`128x64x32`）并匹配 `warps_per_cta`；核对 grid 与 `sm_count`（20 SM）匹配度 |
 
 ## Ampere 环形预取的等待深度
 
@@ -72,5 +74,5 @@ done
 
 ## 停止条件
 
-- 达到目标性能（例如稳定超越 cuBLAS 基线 `speedup_vs_baseline >= 1.0`），或核心杠杆（tile、multi-stage 流水、swizzle、warp 排布、epilogue）已探索充分且连续尝试无 >2–3% 净收益。
+- 达到目标性能（例如稳定超越 cuBLAS 基线 `metrics.speedup >= 1.0`），或核心杠杆（tile、multi-stage 流水、swizzle、warp 排布、epilogue）已探索充分且连续尝试无 >2–3% 净收益。
 - 结束前务必确认 `eval_*.py` 未被改动（`git diff` 检查）且最终版本通过 `gk check`。

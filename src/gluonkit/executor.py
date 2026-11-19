@@ -10,7 +10,7 @@ import tempfile
 
 from gluonkit.core.bencher import DEFAULT_ITERS, DEFAULT_WARMUP, bench_task
 from gluonkit.core.checker import check_task
-from gluonkit.core.history import History
+from gluonkit.core.history import History, summarize_record
 from gluonkit.interfaces.backend import Backend
 from gluonkit.interfaces.types import ProbeResult
 
@@ -108,6 +108,23 @@ def _module_loaded_from(path: Path) -> bool:
     return False
 
 
+def _collect_kernel_summary(task: dict, backend: Backend, kernel_name: str) -> dict | None:
+    """Capture optional backend resource summary after benchmark timing finishes."""
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            info = backend.dump_info(task["run"], tmp_dir)
+    except NotImplementedError:
+        return None
+    summary_map = info.get("summary") if isinstance(info, dict) else None
+    if not isinstance(summary_map, dict) or not summary_map:
+        return None
+    if kernel_name and kernel_name in summary_map:
+        return summary_map[kernel_name]
+    if len(summary_map) == 1:
+        return next(iter(summary_map.values()))
+    return summary_map
+
+
 def run_bench(eval_path: str, backend: Backend, *, trace: bool = False, no_baseline: bool = False,
               note: str | None = None, parent_id: str | None = None) -> dict:
     """Measure mean GPU kernel time, then record the result and both sources in history."""
@@ -126,7 +143,7 @@ def run_bench(eval_path: str, backend: Backend, *, trace: bool = False, no_basel
     trace_dir = None
     trace_path = None
     if trace:
-        root = _runtime_dir("runs")
+        root = _runtime_dir("traces")
         root.mkdir(parents=True, exist_ok=True)
         trace_dir = Path(tempfile.mkdtemp(prefix="bench-", dir=root))
         trace_path = str(trace_dir / "trace.json")
@@ -142,6 +159,7 @@ def run_bench(eval_path: str, backend: Backend, *, trace: bool = False, no_basel
         raise RuntimeError("Kernel or evaluation source changed during bench; not recorded, rerun")
     info = backend.probe()
     bench = result.to_dict()
+    summary = _collect_kernel_summary(task, backend, bench["kernel"]["name"])
     record = history.save({
         "kernel_path": history.normalize_path(kernel_file),
         "kernel_source_hash": history.store_source(kernel_source),
@@ -164,5 +182,27 @@ def run_bench(eval_path: str, backend: Backend, *, trace: bool = False, no_basel
             "timing": "torch.profiler device kernel mean per call",
         },
         "bench": bench,
+        "summary": summary,
     })
     return {"history_id": record["id"], **bench}
+
+
+def run_history(
+    target: str | None = None, *, limit: int | None = None, root: str | Path | None = None,
+) -> dict:
+    """List recorded bench runs, optionally filtered by kernel/eval path and tailed by limit."""
+    if limit is not None and limit <= 0:
+        raise ValueError("--limit must be a positive integer")
+    records = History(root=root).list(target=target)
+    total = len(records)
+    if limit is not None:
+        records = records[-limit:]
+    return {
+        "total": total,
+        "records": [summarize_record(record) for record in records],
+    }
+
+
+def run_restore(record_id: str, *, root: str | Path | None = None) -> dict:
+    """Restore a kernel file to the exact source snapshot of a history record."""
+    return History(root=root).restore(record_id)

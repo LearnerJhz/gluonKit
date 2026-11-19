@@ -9,8 +9,10 @@ from gluonkit.executor import (
     run_bench,
     run_check,
     run_dump_info,
+    run_history,
     run_layout,
     run_probe,
+    run_restore,
 )
 from gluonkit.interfaces.backend import Backend
 from gluonkit.output import capture_run, emit_json
@@ -45,6 +47,10 @@ def _dispatch(args: argparse.Namespace, backend: Backend) -> Any:
             trace=args.trace, no_baseline=args.no_baseline,
             note=args.note, parent_id=args.parent,
         )
+    if args.command == "history":
+        return run_history(args.target, limit=args.limit)
+    if args.command == "restore":
+        return run_restore(args.record_id)
     raise ValueError(f"Unknown command: {args.command}")
 
 
@@ -83,6 +89,13 @@ def main(argv: list[str] | None = None) -> int:
     bench_parser.add_argument("--parent", help="Parent history record id")
     bench_parser.add_argument("--trace", action="store_true", help="Export the measured run's Chrome trace")
     bench_parser.add_argument("--no-baseline", action="store_true", help="Do not measure ref")
+
+    history_parser = commands.add_parser("history", help="List recorded bench experiments")
+    history_parser.add_argument("target", nargs="?", help="Optional kernel or eval path filter")
+    history_parser.add_argument("--limit", type=int, help="Return only the most recent N records")
+
+    restore_parser = commands.add_parser("restore", help="Restore a kernel file from a history snapshot")
+    restore_parser.add_argument("record_id", help="History record id (or unique prefix)")
 
     args = parser.parse_args(argv)
     _configure_env()
