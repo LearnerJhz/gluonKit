@@ -8,10 +8,10 @@ import shutil
 import sys
 import tempfile
 
-from gluonkit.backends.nvidia.backend import NvidiaBackend
 from gluonkit.core.bencher import DEFAULT_ITERS, DEFAULT_WARMUP, bench_task
 from gluonkit.core.checker import check_task
 from gluonkit.core.history import History
+from gluonkit.interfaces.backend import Backend
 from gluonkit.interfaces.types import Output
 from gluonkit.output import capture_run
 
@@ -34,15 +34,14 @@ def load_task(eval_path: str, device: str) -> dict:
     return task
 
 
-def _prepare_task(eval_path: str) -> tuple[Path, NvidiaBackend, dict]:
+def _prepare_task(eval_path: str, backend: Backend) -> tuple[Path, dict]:
     path = Path(eval_path).resolve()
     if not path.is_file():
         raise ValueError(f"Evaluation script not found: {path}")
-    backend = NvidiaBackend()
     available, reason = backend.available()
     if not available:
         raise RuntimeError(reason)
-    return path, backend, load_task(str(path), backend.device)
+    return path, load_task(str(path), backend.device)
 
 
 def _runtime_dir(*parts: str) -> Path:
@@ -50,19 +49,19 @@ def _runtime_dir(*parts: str) -> Path:
     return (Path.cwd() / ".gluonkit").joinpath(*parts).resolve()
 
 
-def run_dump_info(eval_path: str) -> Output:
+def run_dump_info(eval_path: str, backend: Backend) -> Output:
     """Execute run() once and export backend analysis artifacts and summary."""
     def _run() -> dict:
-        path, backend, task = _prepare_task(eval_path)
+        path, task = _prepare_task(eval_path, backend)
         return backend.dump_info(task["run"], _runtime_dir("dump_info", path.stem))
 
     return capture_run(_run)
 
 
-def run_check(eval_path: str) -> Output:
+def run_check(eval_path: str, backend: Backend) -> Output:
     """Load task, JIT-compile via run(), and verify numerical correctness against ref()."""
     def _run() -> None:
-        _, _, task = _prepare_task(eval_path)
+        _, task = _prepare_task(eval_path, backend)
         check_task(task)
 
     return capture_run(_run)
@@ -94,7 +93,7 @@ def _module_loaded_from(path: Path) -> bool:
     return False
 
 
-def run_bench(eval_path: str, *, trace: bool = False, no_baseline: bool = False,
+def run_bench(eval_path: str, backend: Backend, *, trace: bool = False, no_baseline: bool = False,
               note: str | None = None, parent_id: str | None = None) -> Output:
     """Measure mean GPU kernel time, then record the result and both sources in history."""
     def _run() -> dict:
@@ -107,7 +106,7 @@ def run_bench(eval_path: str, *, trace: bool = False, no_baseline: bool = False,
         history = History()
         parent = history.get(parent_id)["id"] if parent_id is not None else None
 
-        _, backend, task = _prepare_task(str(path))
+        _, task = _prepare_task(str(path), backend)
         if not _module_loaded_from(kernel_file):
             raise ValueError(f"KERNEL_PATH {kernel_file} was not imported by the evaluation script")
         trace_dir = None

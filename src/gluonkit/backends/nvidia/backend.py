@@ -8,8 +8,8 @@ from .probe import probe
 
 
 class NvidiaBackend(Backend):
-    name = "nvidia"
-    device = "cuda:0"
+    def __init__(self, device: str = "cuda:0") -> None:
+        self.device = device
 
     def available(self) -> tuple[bool, str]:
         try:

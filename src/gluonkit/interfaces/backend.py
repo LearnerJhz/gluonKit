@@ -5,7 +5,6 @@ from .types import ProbeResult, ProfileData
 
 
 class Backend(Protocol):
-    name: str
     device: str
 
     # 执行前检查 backend 能不能用
