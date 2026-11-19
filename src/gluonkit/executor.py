@@ -141,6 +141,7 @@ def run_bench(eval_path: str, backend: Backend, *, trace: bool = False, no_basel
     if path.read_bytes() != eval_source or kernel_file.read_bytes() != kernel_source:
         raise RuntimeError("Kernel or evaluation source changed during bench; not recorded, rerun")
     info = backend.probe()
+    bench = result.to_dict()
     record = history.save({
         "kernel_path": history.normalize_path(kernel_file),
         "kernel_source_hash": history.store_source(kernel_source),
@@ -162,6 +163,6 @@ def run_bench(eval_path: str, backend: Backend, *, trace: bool = False, no_basel
             "flush_l2": False,
             "timing": "torch.profiler device kernel mean per call",
         },
-        "bench": result.to_dict(),
+        "bench": bench,
     })
-    return {"history_id": record["id"], **result.to_dict()}
+    return {"history_id": record["id"], **bench}

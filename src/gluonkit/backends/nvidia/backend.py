@@ -52,3 +52,9 @@ class NvidiaBackend(Backend):
 
         return profile(fn, iters, warmup, device=self.device,
                        flush_l2=flush_l2, trace_path=trace_path)
+
+    def profile_baseline(
+        self, fn: Callable[[], object], iters: int, warmup: int,
+    ) -> tuple[float, dict[str, Any]]:
+        measured = self.profile(fn, iters, warmup)
+        return measured.avg_ms, {"kernel_name": measured.kernel_name, "avg_ms": measured.avg_ms}

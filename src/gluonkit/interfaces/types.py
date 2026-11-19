@@ -8,14 +8,14 @@ def _to_json_value(value: Any) -> Any:
         return value
     if isinstance(value, Path):
         return str(value)
+    if not isinstance(value, type) and callable(getattr(value, "to_dict", None)):
+        return _to_json_value(value.to_dict())
     if is_dataclass(value) and not isinstance(value, type):
         return _to_json_value(asdict(value))
     if isinstance(value, dict):
         return {key: _to_json_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_to_json_value(item) for item in value]
-    if hasattr(value, "to_dict") and callable(value.to_dict):
-        return _to_json_value(value.to_dict())
     return value
 
 
@@ -68,18 +68,23 @@ class ProfileData:
 
 @dataclass
 class BenchResult:
-    kernel_name: str
-    avg_ms: float
-    std_ms: float = 0.0
-    min_ms: float = 0.0
-    median_ms: float = 0.0
-    baseline_time_ms: float | None = None
-    speedup_vs_baseline: float | None = None
-    tflops: float | None = None
-    gbps: float | None = None
-    roofline_pct: float | None = None
-    bound_by: str | None = None
-    trace_path: str | None = None
+    """The measured kernel profile with baseline comparison and throughput metrics."""
+
+    kernel_profile: ProfileData
+    metrics: dict[str, float | None]
+    baseline: dict[str, Any] | None = None
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        profile = self.kernel_profile
+        return {
+            "trace_path": profile.trace_path,
+            "kernel": {
+                "name": profile.kernel_name,
+                "avg": profile.avg_ms,
+                "median": profile.median_ms,
+                "min": profile.min_ms,
+                "std": profile.std_ms,
+            },
+            "metrics": self.metrics,
+            "baseline": self.baseline,
+        }

@@ -25,9 +25,25 @@ def comparable_key(record: dict) -> str:
     return json.dumps(values, sort_keys=True)
 
 
+def _bench_metrics(record: dict) -> dict:
+    """Read comparison metrics from either nested or historical flat bench records."""
+    bench = record.get("bench") or {}
+    if "metrics" not in bench:
+        return {**bench, "avg_ms": bench.get("avg_ms", bench.get("device_time_ms"))}
+    metrics = bench["metrics"]
+    return {
+        "avg_ms": bench["kernel"]["avg"],
+        "baseline_time_ms": (bench.get("baseline") or {}).get("avg_ms"),
+        "speedup_vs_baseline": metrics["speedup"],
+        "tflops": metrics["tflops"],
+        "gbps": metrics["gbps"],
+        "roofline_pct": metrics["roofline"],
+    }
+
+
 def is_rankable(record: dict) -> bool:
     # Records are only written by successful `gk bench`; correctness is `gk check`'s job.
-    return (record.get("bench") or {}).get("avg_ms") is not None
+    return _bench_metrics(record).get("avg_ms") is not None
 
 
 class History:
@@ -121,7 +137,7 @@ class History:
                 raise ValueError("\n".join(lines))
         if not candidates:
             return None
-        return min(candidates, key=lambda r: r["bench"]["avg_ms"])
+        return min(candidates, key=lambda r: _bench_metrics(r)["avg_ms"])
 
     def diff(self, id_a: str, id_b: str) -> dict:
         a, b = self.get(id_a), self.get(id_b)
@@ -148,7 +164,7 @@ class History:
             ))
 
         metrics = {}
-        bench_a, bench_b = a.get("bench") or {}, b.get("bench") or {}
+        bench_a, bench_b = _bench_metrics(a), _bench_metrics(b)
         for name in METRICS:
             value_a, value_b = bench_a.get(name), bench_b.get(name)
             change = None

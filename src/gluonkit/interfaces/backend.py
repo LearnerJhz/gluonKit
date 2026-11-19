@@ -26,3 +26,9 @@ class Backend(Protocol):
         self, fn: Callable[[], object], iters: int, warmup: int, *,
         flush_l2: bool = False, trace_path: str | None = None,
     ) -> ProfileData: ...
+
+    def profile_baseline(
+        self, fn: Callable[[], object], iters: int, warmup: int,
+    ) -> tuple[float, dict[str, Any]]:
+        """Return mean time in ms and backend-defined JSON details for the reference."""
+        ...

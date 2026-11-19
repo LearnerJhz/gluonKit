@@ -19,19 +19,20 @@ def bench_task(task: dict, backend: Backend, *, iters: int = DEFAULT_ITERS,
     calculate_roofline(None, **metadata)  # Validate metadata before executing GPU work.
     measured = backend.profile(task["run"], iters, warmup, trace_path=trace_path)
     baseline_ms = None
+    baseline = None
     if ref is not None:
-        baseline_ms = backend.profile(ref, iters, warmup).avg_ms
+        baseline_ms, baseline = backend.profile_baseline(ref, iters, warmup)
     speedup = None
     if measured.avg_ms > 0 and baseline_ms is not None and baseline_ms > 0:
         speedup = baseline_ms / measured.avg_ms
+    rates = calculate_roofline(measured.avg_ms, **metadata)
     return BenchResult(
-        kernel_name=measured.kernel_name,
-        avg_ms=measured.avg_ms,
-        std_ms=measured.std_ms,
-        min_ms=measured.min_ms,
-        median_ms=measured.median_ms,
-        baseline_time_ms=baseline_ms,
-        speedup_vs_baseline=speedup,
-        trace_path=measured.trace_path,
-        **calculate_roofline(measured.avg_ms, **metadata),
+        kernel_profile=measured,
+        metrics={
+            "speedup": speedup,
+            "tflops": rates["tflops"],
+            "gbps": rates["gbps"],
+            "roofline": rates["roofline_pct"],
+        },
+        baseline=baseline,
     )
