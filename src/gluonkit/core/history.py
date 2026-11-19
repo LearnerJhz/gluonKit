@@ -10,7 +10,7 @@ import uuid
 # Record fields that must match before two measurements may be ranked together.
 COMPARABLE_FIELDS = ("kernel_path", "platform", "arch", "env",
                      "eval_source_hash", "measurement_options")  # plus device_info.device_name
-METRICS = ("device_time_ms", "baseline_time_ms", "speedup_vs_baseline",
+METRICS = ("avg_ms", "baseline_time_ms", "speedup_vs_baseline",
            "tflops", "gbps", "roofline_pct", "bound_by")
 
 
@@ -27,7 +27,7 @@ def comparable_key(record: dict) -> str:
 
 def is_rankable(record: dict) -> bool:
     # Records are only written by successful `gk bench`; correctness is `gk check`'s job.
-    return (record.get("bench") or {}).get("device_time_ms") is not None
+    return (record.get("bench") or {}).get("avg_ms") is not None
 
 
 class History:
@@ -121,7 +121,7 @@ class History:
                 raise ValueError("\n".join(lines))
         if not candidates:
             return None
-        return min(candidates, key=lambda r: r["bench"]["device_time_ms"])
+        return min(candidates, key=lambda r: r["bench"]["avg_ms"])
 
     def diff(self, id_a: str, id_b: str) -> dict:
         a, b = self.get(id_a), self.get(id_b)

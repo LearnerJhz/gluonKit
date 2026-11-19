@@ -54,15 +54,9 @@ class ProbeResult:
 
 # gk bench 信息
 @dataclass
-class ProfileKernel:
-    name: str
-    avg_ms: float
-
-
-@dataclass
 class ProfileData:
-    device_time_ms: float          # GPU kernel 总耗时 (ms)
-    kernels: list[ProfileKernel]   # 内部已聚合好的 kernel 列表
+    kernel_name: str
+    avg_ms: float
     std_ms: float = 0.0
     min_ms: float = 0.0
     median_ms: float = 0.0
@@ -74,8 +68,8 @@ class ProfileData:
 
 @dataclass
 class BenchResult:
-    device_time_ms: float
-    kernels: list[ProfileKernel]
+    kernel_name: str
+    avg_ms: float
     std_ms: float = 0.0
     min_ms: float = 0.0
     median_ms: float = 0.0

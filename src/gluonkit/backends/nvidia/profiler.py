@@ -5,7 +5,7 @@ import statistics
 from typing import Callable
 from uuid import uuid4
 
-from gluonkit.interfaces.types import ProfileData, ProfileKernel
+from gluonkit.interfaces.types import ProfileData
 
 
 def _validate(fn: Callable[[], object], iters: int, warmup: int) -> None:
@@ -29,13 +29,13 @@ def _cache_buffer(device: str):
 
 
 def _collect_kernels(events, markers: dict[str, int], cache_marker: str,
-                     device_index: int, iters: int) -> tuple[list[float], list[ProfileKernel]]:
+                     device_index: int, iters: int) -> tuple[list[float], str]:
     """Join CUDA events to CPU scopes by correlation IDs, never GPU time windows.
 
     Torch ops use linked_correlation_id; direct Gluon launches use the same
     correlation id as their CUDA runtime/driver launch. Count raw kernel
     events once, excluding copies, memsets and GPU annotation ranges, and
-    return per-iteration durations plus aggregated kernel stats.
+    return per-iteration durations plus the kernel name.
     """
     from torch.autograd import DeviceType
 
@@ -49,7 +49,7 @@ def _collect_kernels(events, markers: dict[str, int], cache_marker: str,
     launches = {event.id: event for event in cpu_events
                 if event.activity_type in ("cuda_runtime", "cuda_driver")}
     per_iter_ms = [0.0] * iters
-    grouped: dict[str, list[float]] = {}
+    kernel_name = ""
     for event in events:
         if (event.device_type != DeviceType.CUDA or
                 event.device_index != device_index or event.activity_type != "kernel"):
@@ -63,24 +63,21 @@ def _collect_kernels(events, markers: dict[str, int], cache_marker: str,
             if iter_idx is not None:
                 duration_ms = event.time_range.elapsed_us() / 1000
                 per_iter_ms[iter_idx] += duration_ms
-                grouped.setdefault(event.name, []).append(duration_ms)
+                if not kernel_name:
+                    kernel_name = event.name
                 break
             parent = parent.cpu_parent
         else:
             raise RuntimeError(f"Cannot associate CUDA kernel {event.name!r} with an "
                                "iteration; launch work on the profiling CPU thread.")
-    kernels = [
-        ProfileKernel(name=name, avg_ms=sum(durations) / len(durations))
-        for name, durations in grouped.items()
-    ]
-    return per_iter_ms, kernels
+    return per_iter_ms, kernel_name
 
 
 def profile(
     fn: Callable[[], object], iters: int, warmup: int, *,
     device: str = "cuda:0", flush_l2: bool = False, trace_path: str | None = None,
 ) -> ProfileData:
-    """Collect mean per-call device kernel duration and aggregated kernel stats in ms.
+    """Collect per-call kernel duration stats (avg_ms, std_ms, min_ms, median_ms) in ms.
 
     fn launches work on the profiling CPU thread and selected device; multiple
     CUDA streams are supported. Warmup and optional eviction are excluded.
@@ -111,10 +108,10 @@ def profile(
                 with torch.profiler.record_function(marker):
                     fn()
                     torch.cuda.synchronize(device)
-        per_iter_ms, kernels = _collect_kernels(
+        per_iter_ms, kernel_name = _collect_kernels(
             capture.events(), markers, cache_marker, device_index, iters,
         )
-        device_time_ms = statistics.fmean(per_iter_ms)
+        avg_ms = statistics.fmean(per_iter_ms)
         std_ms = statistics.stdev(per_iter_ms) if len(per_iter_ms) > 1 else 0.0
         min_ms = min(per_iter_ms)
         median_ms = statistics.median(per_iter_ms)
@@ -125,8 +122,8 @@ def profile(
             capture.export_chrome_trace(str(path))
             exported = str(path)
     return ProfileData(
-        device_time_ms=device_time_ms,
-        kernels=kernels,
+        kernel_name=kernel_name,
+        avg_ms=avg_ms,
         std_ms=std_ms,
         min_ms=min_ms,
         median_ms=median_ms,

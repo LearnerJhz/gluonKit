@@ -20,18 +20,18 @@ def bench_task(task: dict, backend: Backend, *, iters: int = DEFAULT_ITERS,
     measured = backend.profile(task["run"], iters, warmup, trace_path=trace_path)
     baseline_ms = None
     if ref is not None:
-        baseline_ms = backend.profile(ref, iters, warmup).device_time_ms
+        baseline_ms = backend.profile(ref, iters, warmup).avg_ms
     speedup = None
-    if measured.device_time_ms > 0 and baseline_ms is not None and baseline_ms > 0:
-        speedup = baseline_ms / measured.device_time_ms
+    if measured.avg_ms > 0 and baseline_ms is not None and baseline_ms > 0:
+        speedup = baseline_ms / measured.avg_ms
     return BenchResult(
-        device_time_ms=measured.device_time_ms,
-        kernels=measured.kernels,
+        kernel_name=measured.kernel_name,
+        avg_ms=measured.avg_ms,
         std_ms=measured.std_ms,
         min_ms=measured.min_ms,
         median_ms=measured.median_ms,
         baseline_time_ms=baseline_ms,
         speedup_vs_baseline=speedup,
         trace_path=measured.trace_path,
-        **calculate_roofline(measured.device_time_ms, **metadata),
+        **calculate_roofline(measured.avg_ms, **metadata),
     )
