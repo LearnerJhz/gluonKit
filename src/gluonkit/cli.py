@@ -1,10 +1,18 @@
 import argparse
 import os
 from pathlib import Path
+from typing import Any
 
 from gluonkit.backends.nvidia.backend import NvidiaBackend
+from gluonkit.executor import (
+    run_bank_conflicts,
+    run_bench,
+    run_check,
+    run_dump_info,
+    run_layout,
+    run_probe,
+)
 from gluonkit.interfaces.backend import Backend
-from gluonkit.interfaces.types import ProbeResult
 from gluonkit.output import capture_run, emit_json
 
 
@@ -14,23 +22,30 @@ def _configure_env() -> None:
     os.environ.setdefault("KINETO_LOG_LEVEL", "6")
 
 
-def _run_probe(backend: Backend) -> ProbeResult:
-    available, reason = backend.available()
-    if not available:
-        raise RuntimeError(reason)
-    return backend.probe()
+def _parse_shape(shape_arg: str) -> list[int]:
+    return [int(dim.strip()) for dim in shape_arg.split(",")]
 
 
-def _run_layout(backend: Backend, expression: str, shape_arg: str, hardware: bool) -> str:
-    shape = [int(dim.strip()) for dim in shape_arg.split(",")]
-    return backend.layout(expression, shape, hardware)
-
-
-def _run_bank_conflicts(
-    backend: Backend, register_layout: str, shared_layout: str, shape_arg: str, dtype: str,
-) -> dict[str, int]:
-    shape = [int(dim.strip()) for dim in shape_arg.split(",")]
-    return backend.bank_conflicts(register_layout, shared_layout, shape, dtype)
+def _dispatch(args: argparse.Namespace, backend: Backend) -> Any:
+    if args.command == "probe":
+        return run_probe(backend)
+    if args.command == "layout":
+        return run_layout(args.expression, _parse_shape(args.shape), backend, hardware=args.hardware)
+    if args.command == "bank-conflicts":
+        return run_bank_conflicts(
+            args.register_layout, args.shared_layout, _parse_shape(args.shape), args.dtype, backend,
+        )
+    if args.command == "dump-info":
+        return run_dump_info(args.eval_path, backend)
+    if args.command == "check":
+        return run_check(args.eval_path, backend)
+    if args.command == "bench":
+        return run_bench(
+            args.eval_path, backend,
+            trace=args.trace, no_baseline=args.no_baseline,
+            note=args.note, parent_id=args.parent,
+        )
+    raise ValueError(f"Unknown command: {args.command}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -72,34 +87,4 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     _configure_env()
     backend: Backend = NvidiaBackend("cuda:0")
-
-    if args.command == "probe":
-        return emit_json(capture_run(lambda: _run_probe(backend)))
-
-    if args.command == "layout":
-        return emit_json(capture_run(lambda: _run_layout(
-            backend, args.expression, args.shape, args.hardware,
-        )))
-
-    if args.command == "bank-conflicts":
-        return emit_json(capture_run(lambda: _run_bank_conflicts(
-            backend, args.register_layout, args.shared_layout, args.shape, args.dtype,
-        )))
-
-    if args.command == "dump-info":
-        from gluonkit.executor import run_dump_info
-
-        return emit_json(run_dump_info(args.eval_path, backend))
-
-    if args.command == "check":
-        from gluonkit.executor import run_check
-
-        return emit_json(run_check(args.eval_path, backend))
-
-    if args.command == "bench":
-        from gluonkit.executor import run_bench
-
-        return emit_json(run_bench(args.eval_path, backend, trace=args.trace, no_baseline=args.no_baseline,
-                                   note=args.note, parent_id=args.parent))
-
-    return 1
+    return emit_json(capture_run(lambda: _dispatch(args, backend)))

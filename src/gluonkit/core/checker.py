@@ -1,10 +1,10 @@
 """Platform-independent correctness check."""
 
-import torch
-
 
 def check_task(task: dict) -> None:
     """Run task['run']() and compare against task['ref']() using assert_close."""
+    import torch
+
     ref = task.get("ref")
     if not callable(ref):
         raise ValueError("Evaluation script must provide callable ref")
