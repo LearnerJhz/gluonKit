@@ -73,6 +73,8 @@ class BenchResult:
     kernel_profile: ProfileData
     metrics: dict[str, float | None]
     baseline: dict[str, Any] | None = None
+    # Peaks used for roofline: {"tflops", "gbps", "source": {field: "task" | "calibrated:<item>"}}.
+    peaks: dict[str, Any] | None = None
 
     def to_dict(self) -> dict:
         profile = self.kernel_profile
@@ -87,4 +89,5 @@ class BenchResult:
             },
             "metrics": self.metrics,
             "baseline": self.baseline,
+            "peaks": self.peaks,
         }

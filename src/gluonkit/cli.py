@@ -58,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="gk", description="Gluon kernel tools")
     commands = parser.add_subparsers(dest="command", required=True)
 
-    commands.add_parser("probe", help="Show NVIDIA GPU information")
+    commands.add_parser("probe", help="Show GPU information and calibrated peaks for the device")
 
     layout_parser = commands.add_parser("layout", help="Show a Gluon layout mapping (no GPU required)")
     layout_parser.add_argument("expression", help="BlockedLayout(...) or SliceLayout(...)")
@@ -77,13 +77,18 @@ def main(argv: list[str] | None = None) -> int:
     bank_parser.add_argument("--shape", required=True, help="Tensor dimensions, e.g. 64,32")
     bank_parser.add_argument("--dtype", required=True, help="Gluon element type, e.g. float16 or float32")
 
-    dump_parser = commands.add_parser("dump-info", help="Run once and export backend analysis information")
+    dump_parser = commands.add_parser("dump-info",
+                                      help="Run once and export backend analysis information")
     dump_parser.add_argument("eval_path", help="Python script defining prepare(device)")
 
-    check_parser = commands.add_parser("check", help="Compile (JIT) and check correctness against ref")
+    check_parser = commands.add_parser("check",
+                                       help="Compile (JIT) and check correctness against ref")
     check_parser.add_argument("eval_path", help="Python script defining prepare(device)")
 
-    bench_parser = commands.add_parser("bench", help="Measure mean GPU kernel time and record it in history")
+    bench_parser = commands.add_parser(
+        "bench",
+        help="Measure mean GPU kernel time and record it in history (roofline uses calibrated peaks)",
+    )
     bench_parser.add_argument("eval_path", help="Python script defining prepare(device) and KERNEL_PATH")
     bench_parser.add_argument("--note", help="What changed and why (stored in history)")
     bench_parser.add_argument("--parent", help="Parent history record id")
@@ -99,5 +104,5 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     _configure_env()
-    backend: Backend = NvidiaBackend("cuda:0")
+    backend: Backend = NvidiaBackend()
     return emit_json(capture_run(lambda: _dispatch(args, backend)))

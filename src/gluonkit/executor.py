@@ -11,8 +11,8 @@ import tempfile
 from gluonkit.core.bencher import DEFAULT_ITERS, DEFAULT_WARMUP, bench_task
 from gluonkit.core.checker import check_task
 from gluonkit.core.history import History, summarize_record
+from gluonkit.core.peaks import PeakStore, device_key
 from gluonkit.interfaces.backend import Backend
-from gluonkit.interfaces.types import ProbeResult
 
 
 def _ensure_available(backend: Backend) -> None:
@@ -52,10 +52,30 @@ def _runtime_dir(*parts: str) -> Path:
     return (Path.cwd() / ".gluonkit").joinpath(*parts).resolve()
 
 
-def run_probe(backend: Backend) -> ProbeResult:
-    """Verify backend availability and probe device information."""
+def run_probe(backend: Backend, *, root: str | Path | None = None) -> dict:
+    """Verify backend availability, probe device information and attach calibrated peaks."""
     _ensure_available(backend)
-    return backend.probe()
+    info = backend.probe()
+    store = PeakStore(root)
+    entry = store.get(info)
+    peaks: dict = {"file": store.display_path(), "device_key": device_key(info)}
+    if entry is None:
+        peaks.update(values=None, hint="not calibrated; run `.venv/bin/python scripts/calibrate_peaks.py` to measure peaks for this device")
+    else:
+        details = entry.get("details") or {}
+        peaks.update(
+            updated_at=entry.get("updated_at"),
+            values=entry.get("peaks"),
+            items={item: _brief_detail(details.get(item) or {}) for item in entry.get("peaks") or {}},
+        )
+    return {**info.to_dict(), "peaks": peaks}
+
+
+_BRIEF_DETAIL_KEYS = ("unit", "method", "problem", "theoretical_gbps", "efficiency_pct", "calibrated_at")
+
+
+def _brief_detail(detail: dict) -> dict:
+    return {key: detail[key] for key in _BRIEF_DETAIL_KEYS if key in detail}
 
 
 def run_layout(expression: str, shape: list[int], backend: Backend, *, hardware: bool = False) -> str:
@@ -140,6 +160,9 @@ def run_bench(eval_path: str, backend: Backend, *, trace: bool = False, no_basel
     _, task = _prepare_task(str(path), backend)
     if not _module_loaded_from(kernel_file):
         raise ValueError(f"KERNEL_PATH {kernel_file} was not imported by the evaluation script")
+    info = backend.probe()
+    peak_entry = PeakStore(history.root).get(info)
+    calibrated_peaks = (peak_entry or {}).get("peaks")
     trace_dir = None
     trace_path = None
     if trace:
@@ -148,7 +171,8 @@ def run_bench(eval_path: str, backend: Backend, *, trace: bool = False, no_basel
         trace_dir = Path(tempfile.mkdtemp(prefix="bench-", dir=root))
         trace_path = str(trace_dir / "trace.json")
     try:
-        result = bench_task(task, backend, trace_path=trace_path, no_baseline=no_baseline)
+        result = bench_task(task, backend, trace_path=trace_path, no_baseline=no_baseline,
+                            calibrated_peaks=calibrated_peaks)
     except BaseException:
         if trace_dir is not None:
             shutil.rmtree(trace_dir, ignore_errors=True)
@@ -157,7 +181,6 @@ def run_bench(eval_path: str, backend: Backend, *, trace: bool = False, no_basel
     # The recorded snapshot must be exactly the code that was measured.
     if path.read_bytes() != eval_source or kernel_file.read_bytes() != kernel_source:
         raise RuntimeError("Kernel or evaluation source changed during bench; not recorded, rerun")
-    info = backend.probe()
     bench = result.to_dict()
     summary = _collect_kernel_summary(task, backend, bench["kernel"]["name"])
     record = history.save({

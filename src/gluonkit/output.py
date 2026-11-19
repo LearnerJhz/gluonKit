@@ -16,17 +16,23 @@ _RATIO_KEYS = frozenset({"speedup", "speedup_vs_baseline"})
 _RATE_KEYS = frozenset({"tflops", "gbps"})
 
 
+def _is_rate_key(key: str | None) -> bool:
+    # tflops/gbps plus calibrated item names such as tflops_fp16 or theoretical_gbps.
+    return key is not None and (key in _RATE_KEYS or key.startswith(("tflops_", "gbps_"))
+                                or key.endswith(("_tflops", "_gbps")))
+
+
 def _round_float(value: float, key: str | None = None) -> float:
     """Round finite floats for CLI JSON readability without altering non-finite errors."""
     if not isfinite(value):
         return value
-    if key in _MS_KEYS:
+    if key in _MS_KEYS or (key is not None and key.endswith("_ms")):
         ndigits = 6
-    elif key in _PCT_KEYS:
+    elif key in _PCT_KEYS or (key is not None and key.endswith("_pct")):
         ndigits = 2
     elif key in _RATIO_KEYS:
         ndigits = 3
-    elif key in _RATE_KEYS:
+    elif _is_rate_key(key):
         ndigits = 2 if abs(value) >= 1 else 4
     else:
         ndigits = 6
