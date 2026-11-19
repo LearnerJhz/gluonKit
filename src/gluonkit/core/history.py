@@ -33,9 +33,9 @@ def summarize_record(record: dict) -> dict:
     return {
         "id": record["id"],
         "parent_id": record.get("parent_id"),
-        "timestamp": record.get("timestamp"),
         "kernel_path": record.get("kernel_path"),
         "eval_path": record.get("eval_path"),
+        "trace_path": (record.get("bench") or {}).get("trace_path"),
         "note": record.get("note"),
         "avg_ms": metrics.get("avg_ms"),
         "baseline_ms": metrics.get("baseline_time_ms"),

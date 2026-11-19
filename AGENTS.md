@@ -21,7 +21,7 @@
 | `gk check <eval.py>` | 触发 JIT 编译并校验与 `ref()` 数值一致（默认 `atol=rtol=1e-2`） | `null` 或失败详情 |
 | `gk bench <eval.py> [--note "..."] [--parent <id>] [--trace] [--no-baseline]` | 预热 10 次、测量 100 次耗时分布，并将结果与源码快照写入 `.gluonkit/` | `history_id`, `trace_path`, `kernel`, `metrics`, `baseline` |
 | `gk dump-info <eval.py>` | 运行一次，导出 `ttgir`/`llir`/`ptx` 到 `.gluonkit/dump_info/<eval名>/<kernel名>/` | `artifacts`（文件路径）, `summary`（`n_regs`, `n_spills`, `n_max_threads`, `shared_bytes`, `allocated_shared_bytes`, `num_warps`, `blocks_per_sm`, `occupancy_pct`） |
-| `gk history [<kernel_or_eval>] [--limit N]` | 查看已记录的 `bench` 实验摘要与资源占用 | `total`, `records`（`id`, `parent_id`, `note`, `avg_ms`, `speedup`, `tflops`, `gbps`, `roofline`, `summary`） |
+| `gk history [<kernel_or_eval>] [--limit N]` | 查看已记录的 `bench` 实验摘要与资源占用 | `total`, `records`（`id`, `parent_id`, `trace_path`, `note`, `avg_ms`, `speedup`, `tflops`, `gbps`, `roofline`, `summary`） |
 | `gk restore <id>` | 按历史快照恢复对应的 `kernel` 文件（支持唯一 ID 前缀） | `id`, `kernel_path`, `kernel_source_hash`, `previous_hash`, `changed` |
 
 `kernel` 包含 `name` 和毫秒计的 `avg`、`median`、`min`、`std`。`metrics` 包含 `speedup`、`tflops`、`gbps` 和 `roofline`（峰值利用率百分比，数据不足时为 `null`）。`baseline` 是由后端填充的字典。NVIDIA 后端只返回 `ref()` 实测的 `kernel_name` 和 `avg_ms`。启用 `--trace` 时只导出待测算子的 `trace.json`，路径见顶层 `trace_path`。关闭基准或缺少 `ref` 时，`baseline` 为 `null`。
