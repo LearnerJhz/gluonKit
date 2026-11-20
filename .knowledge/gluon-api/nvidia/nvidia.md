@@ -25,6 +25,21 @@
 | 原生打包运算 | `blackwell.{add2,sub2,mul2,fma2,min2,max2}`；`rubin.{add4,sub4,mul4,fma4}` | 分别用于二路或四路（FP8/FP4）原生打包算术，普通逐元素加法直接写 `x + y` 即可 |
 | CLC 动态调度 | `blackwell.clc`: `try_cancel`、`load_result`、`clc_result.is_canceled`、`clc_result.program_id` | 持久化 kernel 尝试接管尚未启动的 cluster；请求完成后经 `load_result` 读入寄存器，检查 `is_canceled()` 并用 `program_id(dim)` 取新坐标 |
 
+## 全局访存缓存提示与 sm86 Softmax 实测
+
+在 NVIDIA 上，`gl.load(..., cache_modifier=".cg")` 请求经 L2 及以下缓存读取，绕过 L1。`gl.store(..., cache_modifier=".cs")` 发出流式写回提示。可用 `gk api show load store` 查签名，参数语义可在本机 Triton 的 `triton/language/core.py` 中查 `load` 和 `store` 的 docstring，再用 `gk dump-info` 核对生成的 PTX。
+
+以下是 Triton 3.8.0 在 RTX 3050 6GB Laptop GPU（sm86）上对连续 `4096 × 4096` FP16 Softmax 的独立实验。默认版每个 CTA 用 4 个 warp 处理一行，均值 423.034 µs。
+
+| 改动 | 编译证据 | 均值 |
+|---|---|---:|
+| 读取使用 `.cg` | `ld.global.cg.b16` | 422.941 µs |
+| 写回使用 `.cs` | `st.global.cs.b16` | 423.134 µs |
+| 每线程连续元素从 1 增至 8 | 评测的基地址与行步长满足对齐，静态 PTX 读写各由 32 条 16-bit 指令变为 4 条 128-bit 指令（`ld.global.v4.b32`、`st.global.v4.b32`） | 427.046 µs |
+| 每个 CTA 处理 4 行，每个 warp 独立归约一行 | PTX 中的 `bar.sync` 消失，共享内存编译用量从 16 B 降至 0 B，每线程寄存器从 51 增至 167 | 426.516 µs |
+
+缓存提示已在 PTX 生效，两项延迟变化都在测量波动内。更宽的访存和去掉 CTA 内同步的版本在这个用例上均变慢。换架构或输入布局时，重新验证生成的指令和性能。[完整 Softmax 实验记录](../../../kernels/softMax/REPORT.md) · [换目标时的通用验证步骤](../gluon-api-common.md#换目标时验证访存与归约)
+
 ## 复导出、兼容别名与设备数学库
 
 - **继承复导出**：`hopper` 复导出 `ampere` 的 `async_copy` 与 `mma_v2`；`blackwell` 复导出 `ampere`/`hopper` 的常用扩展；`rubin` 复导出 `blackwell` 扩展并补充四路打包运算与新 `mbarrier`/`TensorMemoryScalesLayout`。

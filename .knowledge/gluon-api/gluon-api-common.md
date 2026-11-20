@@ -18,7 +18,7 @@
 | 显式与自动布局 | `gl.BlockedLayout`、`gl.SliceLayout`、`gl.DistributedLinearLayout`、`gl.DotOperandLayout`、`gl.to_linear_layout`；`gl.AutoLayout`、`gl.CoalescedLayout`、`gl.set_auto_layout`；`gl.convert_layout(..., assert_trivial=False)` | 构造 `BlockedLayout` 时 `prod(threads_per_warp)` 须匹配目标 `warp_size`，`prod(warps_per_cta)` 须匹配 `num_warps`；`convert_layout` 可能引入寄存器重排、shuffle 或隐式 shared 中转 |
 | 全局访存与原子 | `gl.load`、`gl.store`；`gl.atomic_add`、`gl.atomic_and`、`gl.atomic_cas`、`gl.atomic_max`、`gl.atomic_min`、`gl.atomic_or`、`gl.atomic_xchg`、`gl.atomic_xor` | `load`/`store` 对越界地址需传 `mask`（及 `other`）；全局原子支持 `sem`、`scope`、`mask` 参数 |
 | 共享内存分配与访问 | `gl.allocate_shared_memory`、`gl.SwizzledSharedLayout`、`gl.PaddedSharedLayout`、`gl.SharedLinearLayout`、`gl.bank_conflicts`；`smem.load`、`smem.store`、`smem.gather`、`smem.scatter`、`smem.atomic_scatter_{add,max,min,and,or,xor,xchg}`；`smem.index`、`smem.slice`、`smem.permute`、`smem.reshape` | `smem.index`/`slice`/`permute`/`reshape` 为零拷贝描述符视图；`gl.bank_conflicts(distr_ty, shared_ty)` 为编译期冲突数查询，不生成运行时指令 |
-| 归约、扫描、Gather | `gl.reduce`、`gl.sum`、`gl.max`、`gl.min`、`gl.reduce_or`、`gl.xor_sum`、`gl.associative_scan`、`gl.histogram`、`gl.gather` | `gl.sum` 等后端会按“线程内合并 -> 组内 shuffle -> 跨组 shared 暂存与 barrier”自动完成，源码无需手写通信屏障；注意 `gl.gather` 为分布式张量内部 gather，不同于 `smem.gather` |
+| 归约、扫描、Gather | `gl.reduce`、`gl.sum`、`gl.max`、`gl.min`、`gl.reduce_or`、`gl.xor_sum`、`gl.associative_scan`、`gl.histogram`、`gl.gather` | 编译器按目标和布局生成 `gl.sum` 等归约的通信，跨执行组时可能使用共享内存与屏障。`gl.gather` 在分布式张量内按索引取值，`smem.gather` 从共享内存描述符按索引取值 |
 | 通用计算、同步与扩展 | `gl.dot_fma`、`gl.map_elementwise`、`gl.barrier(cluster=False)`、`gl.warp_specialize`、`gl.inline_asm_elementwise`、`gl.extra.libdevice`、`gl.device_assert`、`gl.device_print`、`gl.expect_zero` | `gl.dot_fma(a, b, acc)` 是不依赖专用矩阵指令的通用 FMA 矩阵乘（`acc` 用 `BlockedLayout`，乘数用 `DotOperandLayout`）；`gl.extra.libdevice` 含 198 个底层数学/转换函数，可用 `.venv/bin/gk api list triton.language.extra.libdevice` 查询 |
 
 ## 通用与平台边界
@@ -30,6 +30,14 @@
   - `gl.load`/`gl.store` 的 `cache_modifier`/`eviction_policy`、FP8/FP4 数据类型、特殊舍入模式与原子语义范围取决于具体后端；
   - `gl.inline_asm_elementwise(asm, constraints, ...)` 中的内联汇编体与寄存器约束直接绑定目标指令集（如 PTX）；
   - `gl.extra.libdevice` 同时包含通用数学入口和后端特定绑定（如在 NVIDIA 后端对应 CUDA libdevice）。
+
+## 换目标时验证访存与归约
+
+1. **建立目标基线。** 先用默认缓存策略，沿用算子的数学定义、输入约定、参考实现和容差。根据目标的执行组宽度构造布局，重新核对 CTA 启动配置、基地址与步长对齐以及尾块 mask。在目标设备先校验，再建立该设备的参考基线和算子基线。
+2. **核对编译结果。** 每轮只调整一个缓存参数或布局变量。先从当前安装版本查参数语义，再从目标编译产物确认生效。访存查生成的读写宽度和缓存控制，归约查跨执行组的通信与同步，并同时记录寄存器、spill 和共享内存。前端能接受参数只说明该参数能进入编译流程，最终行为以目标产物为准。
+3. **独立判断性能收益。** 用同一设备、输入和计时口径复测延迟及波动。减少指令、降低寄存器或消除同步可以解释编译结果，是否留用由校验和实测性能决定。跨设备记录各自的参考基线、设备架构和编译器版本。
+
+后端接入后可用 `gk check`、`gk baseline`、`gk bench` 和 `gk dump-info` 完成闭环。当前 CLI 入口使用 `NvidiaBackend`，接入其他平台时需提供该平台的校验运行、计时和产物导出路径。[CLI 后端入口](../../src/gluonkit/cli.py) · [NVIDIA 缓存提示与 sm86 实测](nvidia/nvidia.md#全局访存缓存提示与-sm86-softmax-实测)
 
 ## 构造 tile 和处理边界
 
@@ -77,6 +85,6 @@ def row_sum(x):
     return out
 ```
 
-这里每行只有一个 program 写结果。线程间归约由 `gl.sum` 的通用 lowering（线程内合并 + 目标后端 shuffle + 跨 warp 共享暂存与同步）处理，源码里无需另加屏障。本例已在 sm86 上通过 `gk check`，与 `x.float().sum(dim=1)` 对照，覆盖 5 行、列数分别为 1、127、128、129、256 的 FP16 输入。
+这里每行只有一个 program 写结果，线程间通信由 `gl.sum` 的 lowering 处理。本例已在 sm86 上通过 `gk check`，与 `x.float().sum(dim=1)` 对照，覆盖 5 行、列数分别为 1、127、128、129、256 的 FP16 输入。
 
 需要矩阵单元或显式异步搬运时，可按架构查找对应入口。[NVIDIA 专用扩展](nvidia/nvidia.md) · [返回 Gluon API 知识库](../../AGENTS.md#gluon-api-知识库)
