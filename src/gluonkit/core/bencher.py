@@ -184,8 +184,8 @@ def run_benchmark(
     parent_id: str | None = None,
     root: str | Path | None = None,
     options: BenchOptions | None = None,
-) -> tuple[dict[str, Any], bool]:
-    """Run target benchmark, persist history + source snapshots, and report missing baseline."""
+) -> dict[str, Any]:
+    """Run target benchmark against stored baseline and persist history + source snapshots."""
     opts = options or BenchOptions()
     history = History(root=root)
     parent = history.get(parent_id)["id"] if parent_id is not None else None
@@ -231,5 +231,4 @@ def run_benchmark(
             "summary": summary,
         })
 
-    missing_baseline = stored_baseline is None and task.get("ref") is not None
-    return {"history_id": record["id"], **bench}, missing_baseline
+    return {"history_id": record["id"], **bench}

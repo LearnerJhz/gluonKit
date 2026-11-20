@@ -9,7 +9,7 @@ from gluonkit.core.bencher import record_baseline, run_benchmark
 from gluonkit.core.checker import check_task
 from gluonkit.core.history import History, summarize_record
 from gluonkit.core.peaks import PeakStore, device_key
-from gluonkit.core.storage import gluonkit_dir, normalize_path
+from gluonkit.core.storage import gluonkit_dir
 from gluonkit.interfaces.backend import Backend
 
 _BRIEF_DETAIL_KEYS = ("unit", "method", "problem", "theoretical_gbps", "efficiency_pct", "calibrated_at")
@@ -74,10 +74,6 @@ def _module_loaded_from(path: Path) -> bool:
 
 def _brief_detail(detail: dict) -> dict:
     return {key: detail[key] for key in _BRIEF_DETAIL_KEYS if key in detail}
-
-
-def _baseline_hint(eval_path: str) -> str:
-    return f"no stored baseline for this eval; run `.venv/bin/gk baseline {eval_path}` to measure and store ref"
 
 
 def run_probe(backend: Backend, *, root: str | Path | None = None) -> dict:
@@ -160,7 +156,7 @@ def run_bench(
     if not _module_loaded_from(kernel_file):
         raise ValueError(f"Kernel file {kernel_file} was not imported by the evaluation script")
 
-    response, missing_baseline = run_benchmark(
+    return run_benchmark(
         path,
         kernel_file,
         task,
@@ -172,9 +168,6 @@ def run_bench(
         parent_id=parent_id,
         root=root,
     )
-    if missing_baseline:
-        response["baseline_hint"] = _baseline_hint(normalize_path(path, root))
-    return response
 
 
 def run_history(

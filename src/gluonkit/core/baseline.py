@@ -61,15 +61,16 @@ class BaselineStore:
             return None
         return {"file": self.display_path(self.target_path(eval_path)), **entry}
 
-    def lookup(self, eval_path: str | Path) -> dict[str, Any] | None:
-        """Return stored baseline dict with `measured_at` and `source`, or None if missing."""
-        entry = self._read(eval_path)
-        if entry is None:
-            return None
+    def lookup(self, eval_path: str | Path) -> dict[str, Any]:
+        """Load stored baseline summary (`kernel_name` and `avg_ms`)."""
+        target = self.target_path(eval_path)
+        if not target.is_file():
+            raise FileNotFoundError(f"Baseline not found: {self.display_path(target)} (run `gk baseline` first)")
+        entry = json.loads(target.read_text(encoding="utf-8"))
+        baseline = entry["baseline"]
         return {
-            **entry["baseline"],
-            "measured_at": entry["measured_at"],
-            "source": "stored",
+            "kernel_name": baseline["kernel_name"],
+            "avg_ms": baseline["avg_ms"],
         }
 
     def save(
