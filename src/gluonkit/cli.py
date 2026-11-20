@@ -1,6 +1,7 @@
 import argparse
 import os
 from pathlib import Path
+import sys
 from typing import Any
 
 from gluonkit.backends.nvidia.backend import NvidiaBackend
@@ -26,6 +27,27 @@ def _configure_env() -> None:
 
 def _parse_shape(shape_arg: str) -> list[int]:
     return [int(dim.strip()) for dim in shape_arg.split(",")]
+
+
+def _run_api(args: argparse.Namespace) -> int:
+    """Plain-text Gluon API introspection: stdout for results, stderr + exit 1 for unresolved symbols."""
+    from gluonkit.core import gluon_api
+
+    try:
+        mod = gluon_api.resolve_module(args.module)
+    except ImportError as exc:
+        print(f"[ERROR] {exc}", file=sys.stderr)
+        return 1
+
+    if args.api_command == "list":
+        print(gluon_api.list_module(mod))
+        return 0
+    text, errors = gluon_api.show_symbols(mod, args.symbols, fallback=args.module is None)
+    if text:
+        print(text)
+    for line in errors:
+        print(line, file=sys.stderr)
+    return 1 if errors else 0
 
 
 def _dispatch(args: argparse.Namespace, backend: Backend) -> Any:
@@ -102,7 +124,19 @@ def main(argv: list[str] | None = None) -> int:
     restore_parser = commands.add_parser("restore", help="Restore a kernel file from a history snapshot")
     restore_parser.add_argument("record_id", help="History record id (or unique prefix)")
 
+    api_parser = commands.add_parser(
+        "api", help="Inspect live Gluon APIs (plain text output, no GPU required)",
+    )
+    api_commands = api_parser.add_subparsers(dest="api_command", required=True)
+    api_list = api_commands.add_parser("list", help="List public APIs and submodules of a module")
+    api_list.add_argument("module", nargs="?", default=None, help="Module to list (default: gl)")
+    api_show = api_commands.add_parser("show", help="Show signature and doc of symbols")
+    api_show.add_argument("symbols", nargs="+", help="Symbol names, e.g. max sum exp load")
+    api_show.add_argument("-m", "--module", default=None, help="Search only this module (default: gl, falling back to gluon)")
+
     args = parser.parse_args(argv)
     _configure_env()
+    if args.command == "api":
+        return _run_api(args)
     backend: Backend = NvidiaBackend()
     return emit_json(capture_run(lambda: _dispatch(args, backend)))

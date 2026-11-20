@@ -9,15 +9,15 @@ description: Write, port, or debug Gluon GPU kernels. Use for Gluon API semantic
 
 ## 核实未知 API（严禁凭记忆编造）
 
-不确定符号签名、可用子模块或参数约束时，先用内置自省脚本查询当前环境：
+不确定符号签名、可用子模块或参数约束时，先用 `gk api` 查询当前环境（纯文本输出，无需 GPU；查不到的符号写到 stderr 并以退出码 1 结束）：
 
 ```bash
 # 列出 gl 或指定后端子模块的全部可用原语、Layout 与子模块
-.venv/bin/python .agents/skills/gluon-api/scripts/introspect.py --list [module]
+.venv/bin/gk api list [module]
 
 # 一次性查询多个符号的真实签名与首段 docstring
-.venv/bin/python .agents/skills/gluon-api/scripts/introspect.py max sum exp load
-.venv/bin/python .agents/skills/gluon-api/scripts/introspect.py -m language.nvidia.ampere mma_v2 async_copy.async_load
+.venv/bin/gk api show max sum exp load
+.venv/bin/gk api show -m language.nvidia.ampere mma_v2 async_copy.async_load
 ```
 
 也可直接根据导入路径查看当前安装包 `.venv/lib/python3.12/site-packages/triton/experimental/gluon/` 中的定义。修改 kernel 后按仓库约定用 `gk check` 验证对应目标和用例。

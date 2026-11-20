@@ -1,18 +1,40 @@
 # B. NVIDIA 专用扩展
 
-设备端扩展位于 `triton.experimental.gluon.language.nvidia`。表中从架构模块写起，例如 `ampere.mma_v2`；其中 `NVMMADistributedLayout` 与 `NVMMASharedLayout` 从 `gl` 顶层导出但属于 NVIDIA 专用，TMA 的主机端描述符位于 `triton.experimental.gluon.nvidia.hopper`（及 `blackwell` 复导出）。下列入口已按本机 Triton 3.8.0 核对，具体指令的目标、dtype 和 layout 约束仍需分别验证。
+设备端扩展位于 `triton.experimental.gluon.language.nvidia.<架构>`（`ampere`、`hopper`、`blackwell`、`rubin`），主机端 TMA 描述符位于 `triton.experimental.gluon.nvidia.hopper`（及 `blackwell` 复导出）；另外 `NVMMADistributedLayout` 与 `NVMMASharedLayout` 从 `gl` 顶层导出但属于 NVIDIA 专用。下列全部接口已对照本机 Triton 3.8.0 核实，实际指令支持仍取决于目标 compute capability、dtype 与 layout 组合。
 
-| 功能 | 架构模块与代表入口 | 使用时需要理解的约束 |
+## 专用类型、布局与主机描述符
+
+| 类别 | 模块与符号 | 说明与约束 |
 |---|---|---|
-| 专用布局与主机描述符 | `gl.NVMMADistributedLayout`、`gl.NVMMASharedLayout`、`gluon.nvidia.hopper.TensorDescriptor` / `TensorDescriptorIm2Col` | 前两者虽在 `gl` 下导出，但仅用于 NVIDIA MMA / TMA 路径；`TensorDescriptor` 在主机侧构造并传入 TMA kernel |
-| 矩阵乘加（MMA、WGMMA、tcgen05） | `ampere.mma_v2`、`hopper.warpgroup_mma` / `hopper.warpgroup_mma_wait`、`blackwell.tcgen05_mma` / `blackwell.tcgen05_mma_scaled` | Ampere 的 A/B 使用匹配的 dot operand layout。Hopper 的异步 WGMMA 在使用累加结果前要等待。Blackwell 的 tcgen05 路径把累加结果写入 TMEM |
-| 异步搬运（cp.async） | `ampere.async_copy.async_load`、`commit_group`、`wait_group`（后二者也在 `ampere.async_copy` 内） | 从全局内存向共享内存发起拷贝，按组提交和等待。连续宽度、源地址与步长对齐会限制可生成的拷贝宽度 |
-| TMA（Tensor Memory Accelerator） | `hopper.tma.async_load`、`hopper.tma.async_store`、`hopper.tma.store_wait`、`blackwell.tma.async_gather` / `async_scatter` | 用描述符和坐标搬运 tile。加载以 mbarrier 通知到达，存储按 TMA store 的等待机制确认完成 |
-| mbarrier | `ampere.mbarrier.init`、`ampere.mbarrier.arrive`、`ampere.mbarrier.wait`、`hopper.mbarrier.expect`、`rubin.mbarrier.arrive` | 用共享内存中的 barrier 对象跟踪到达计数和 phase。Hopper 的 TMA 加载还要登记预期传输字节数；Rubin 支持多播掩码 `cta_mask` |
-| TMEM（Tensor Memory） | `blackwell.TensorMemoryLayout`、`blackwell.allocate_tensor_memory`、`blackwell.tcgen05_copy` | TMEM 是 tcgen05 路径使用的独立存储空间。`tcgen05_copy` 从共享内存复制到 TMEM，读取或复用时须满足相应完成条件 |
-| 打包运算 | `blackwell.add2`、`blackwell.fma2`、`rubin.add4`、`rubin.fma4` | 接口表达二路或四路打包算术，支持的元素类型和组合依赖目标指令。普通逐元素加法可以直接写 `x + y` |
-| CLC（Cluster Launch Control） | `blackwell.clc.try_cancel`、`blackwell.clc.load_result` | 持久化 kernel 尝试接管尚未启动的 cluster。等请求完成后检查 `result.is_canceled()`，成功时通过 `result.program_id(dim)` 取得对应工作 |
+| 顶层 NVIDIA 布局 | `gl.NVMMADistributedLayout`、`gl.NVMMASharedLayout`（含 `.get_default_for`） | 用于 NVIDIA MMA 累加器及共享内存矩阵/TMA tile；`NVMMADistributedLayout` 的 `version=[2, 0]` 对应 Ampere `mma_v2` |
+| Barrier 布局 | `ampere.mbarrier.MBarrierLayout`（含 `.multicta`） | 配合 `allocate_shared_memory` 或 `allocate_mbarrier` 为共享内存中的 mbarrier 指定布局 |
+| TMEM 布局 | `blackwell.TensorMemoryLayout`、`blackwell.TensorMemoryScalesLayout`、`rubin.TensorMemoryScalesLayout` | 描述 Blackwell/Rubin Tensor Memory 及微缩放（scale）排布；Rubin 版增加 `block_rep_order`（`"mnThenK"` / `"kThenMn"`） |
+| 设备端描述符与结果类型 | `hopper.tma.tensor_descriptor` / `tensor_descriptor_type`、`tensor_descriptor_im2col` / `tensor_descriptor_im2col_type`；`hopper.warpgroup_mma_accumulator` / `warpgroup_mma_accumulator_type`；`blackwell.tensor_memory_descriptor` / `tensor_memory_descriptor_type`；`blackwell.clc.clc_result` / `clc_result_type` | 分别对应 TMA 描述符、WGMMA 累加器句柄、TMEM 描述符与 CLC 取消请求返回值 |
+| 主机端 TMA 描述符 | `gluon.nvidia.hopper.TensorDescriptor`、`TensorDescriptorIm2Col`（及 `.from_tensor`；`gluon.nvidia.blackwell.TensorDescriptor` 复导出） | 在主机侧基于 `NVMMASharedLayout` 构造并传入 kernel；要求基地址与外维步长满足 16B（`fp4_padded` 需 32B）对齐 |
 
-sm86 上的 FP16 GEMM 用 `NVMMADistributedLayout` 定义累加器，用 `async_copy` 填充共享 tile，按 `DotOperandLayout` 将数据读给 `mma_v2`。网格索引和尾块 mask 的做法也适用于其他后端。[sm86 的布局约束与 GEMM 骨架](nvidia-sm86.md) · [通用核心功能](../gluon-api-common.md)
+## 专用操作与辅助接口
 
-本机安装包中各代扩展定义在 `triton/experimental/gluon/language/nvidia/<架构>/`，未列入上表的接口可用 `.agents/skills/gluon-api/scripts/introspect.py --list language.nvidia.<架构>` 现场查询。使用在线参考时，留意上游页面与本机版本的差异。[Triton NVIDIA 扩展文档](https://triton-lang.org/main/gluon/api/nvidia.html) · [CLC 接口说明](https://triton-lang.org/main/gluon/api/generated/triton.experimental.gluon.language.nvidia.blackwell.clc.html)
+| 功能域 | 架构模块与全部入口 | 使用时需要理解的约束 |
+|---|---|---|
+| 矩阵乘加与等待 | `ampere.mma_v2`；`hopper.warpgroup_mma`、`hopper.warpgroup_mma_wait`、`hopper.warpgroup_mma_init`；`blackwell.tcgen05_mma`、`blackwell.tcgen05_mma_scaled`、`blackwell.tcgen05_mma_barrier_count` | `mma_v2` 要求 `acc` 为 `NVMMADistributedLayout(version=[2, 0])`、A/B 为匹配 `DotOperandLayout`，经 `tt.dot` 发射 PTX `mma.sync`；`warpgroup_mma` 异步执行，消费累加结果前须 `warpgroup_mma_wait`；`tcgen05` 路径将累加器直接存于 TMEM |
+| 异步拷贝（cp.async） | `ampere.async_copy.async_load`、`commit_group`、`wait_group`、`mbarrier_arrive` | 从全局内存向共享内存发起拷贝，按组提交和等待或通知 mbarrier；连续宽度、源地址与步长对齐限制实际拷贝字节数 |
+| mbarrier 同步 | `ampere.mbarrier`: `allocate_mbarrier`、`init`、`invalidate`、`arrive`、`wait`；`hopper.mbarrier`: `expect`、`arrive(count=...)`、`fence_init_release_cluster`；`rubin.mbarrier`: `arrive(..., cta_mask=...)` | Ampere `arrive` 固定计数 1，Hopper 支持指定 `count` 与 TMA 预期字节 `expect`，Rubin 增加多播掩码 `cta_mask` |
+| Cluster 与异步 Shared 顺序 | `hopper.cluster`: `arrive`、`wait`、`barrier`；`hopper.fence_async_shared`、`hopper.async_store` | 用于多 CTA cluster 内同步；`hopper.async_store` 是至少 2 CTA cluster 下向共享内存异步写并通知 mbarrier，不同于 `tma.async_store` |
+| TMA 描述符与搬运 | `hopper.tma`: `make_tensor_descriptor`、`async_load`、`async_load_im2col`、`async_store`、`store_wait`、`async_atomic_{add,min,max,and,or,xor}`；`blackwell.tma`: `async_gather`、`async_scatter` | 设备端可用 `make_tensor_descriptor` 或直接传入主机端 `TensorDescriptor`；加载以 mbarrier 通知到达，存储用 `store_wait` 确认完成 |
+| TMEM 与 tcgen05 通路 | `blackwell.allocate_tensor_memory`、`blackwell.tcgen05_copy`、`blackwell.tcgen05_commit`；`tensor_memory_descriptor.{load,store,load_min,load_max,get_reg_layout,slice,index}` | TMEM 是独立于共享内存/寄存器的片上矩阵存储；`tcgen05_copy` 从共享内存拷入 TMEM，`tcgen05_commit` 在此前异步 tcgen05 指令完成后触发 mbarrier |
+| 原生打包运算 | `blackwell.{add2,sub2,mul2,fma2,min2,max2}`；`rubin.{add4,sub4,mul4,fma4}` | 分别用于二路或四路（FP8/FP4）原生打包算术，普通逐元素加法直接写 `x + y` 即可 |
+| CLC 动态调度 | `blackwell.clc`: `try_cancel`、`load_result`、`clc_result.is_canceled`、`clc_result.program_id` | 持久化 kernel 尝试接管尚未启动的 cluster；请求完成后经 `load_result` 读入寄存器，检查 `is_canceled()` 并用 `program_id(dim)` 取新坐标 |
+
+## 复导出、兼容别名与设备数学库
+
+- **继承复导出**：`hopper` 复导出 `ampere` 的 `async_copy` 与 `mma_v2`；`blackwell` 复导出 `ampere`/`hopper` 的常用扩展；`rubin` 复导出 `blackwell` 扩展并补充四路打包运算与新 `mbarrier`/`TensorMemoryScalesLayout`。
+- **兼容旧名**：`ampere.async_copy.async_copy_global_to_shared`、 `hopper.tma.async_copy_global_to_shared(_im2col)`、`hopper.tma.async_copy_shared_to_global` 为历史别名，实际语义与 `async_load(_im2col)` / `async_store` 相同，新代码优先用短名。
+- **CUDA 设备数学库**：`gl.extra.libdevice` 在 NVIDIA 后端绑定到 CUDA libdevice（共 198 个函数，含带舍入修饰的 `add_rn`/`fma_rn`、快速近似 `fast_*`、位运算 `clz`/`popc`/`brev` 与特殊数学函数）；若需核对符号列表或参数，运行：
+  ```bash
+  .venv/bin/gk api list language.nvidia.<架构>
+  .venv/bin/gk api list triton.language.extra.libdevice
+  ```
+
+sm86 上的 FP16 GEMM 用 `NVMMADistributedLayout` 定义累加器，用 `async_copy` 填充共享 tile，按 `DotOperandLayout` 将数据读给 `mma_v2`。网格索引和尾块 mask 的做法也适用于其他后端。[sm86 的布局约束与 GEMM 骨架](nvidia-sm86.md) · [通用核心功能](../gluon-api-common.md) · [排错表](../troubleshooting.md)
+
+使用在线参考时，留意上游页面与本机 Triton 3.8.0 版本的差异。[Triton NVIDIA 扩展文档](https://triton-lang.org/main/gluon/api/nvidia.html) · [CLC 接口说明](https://triton-lang.org/main/gluon/api/generated/triton.experimental.gluon.language.nvidia.blackwell.clc.html)

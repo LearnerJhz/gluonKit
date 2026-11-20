@@ -1,14 +1,11 @@
-#!/usr/bin/env python3
-"""Runtime introspection for triton.experimental.gluon (platform-agnostic)."""
+"""Runtime introspection of triton.experimental.gluon (platform-agnostic, no GPU required)."""
 
 from __future__ import annotations
 
-import argparse
 import importlib
 import inspect
 import pkgutil
 import re
-import sys
 
 ROOT_PKG = "triton.experimental.gluon"
 LANG_PKG = f"{ROOT_PKG}.language"
@@ -29,9 +26,14 @@ def resolve_module(spec: str | None):
     raise ImportError(f"Cannot resolve module '{spec}' under {ROOT_PKG}")
 
 
-def resolve_symbol(base_mod, symbol: str):
+def resolve_symbol(base_mod, symbol: str, *, fallback: bool = True):
+    """Resolve `symbol` and return (object, module it was found in).
+
+    With fallback=False only `base_mod` is searched (used for an explicit -m);
+    otherwise gl and then gluon are tried after `base_mod`.
+    """
     roots = [base_mod]
-    for pkg_name in (LANG_PKG, ROOT_PKG):
+    for pkg_name in (LANG_PKG, ROOT_PKG) if fallback else ():
         pkg = importlib.import_module(pkg_name)
         if pkg not in roots:
             roots.append(pkg)
@@ -46,7 +48,7 @@ def resolve_symbol(base_mod, symbol: str):
             elif inspect.ismodule(cur):
                 sub_name = f"{cur.__name__}.{'.'.join(parts[i:])}"
                 try:
-                    return importlib.import_module(sub_name)
+                    return importlib.import_module(sub_name), root
                 except ImportError:
                     ok = False
                     break
@@ -54,7 +56,7 @@ def resolve_symbol(base_mod, symbol: str):
                 ok = False
                 break
         if ok:
-            return cur
+            return cur, root
     raise AttributeError(f"Symbol '{symbol}' not found in {base_mod.__name__}")
 
 
@@ -99,7 +101,8 @@ def _first_paragraph(obj) -> str:
     return re.sub(r"\s+", " ", para).strip()
 
 
-def cmd_list(mod) -> None:
+def list_module(mod) -> str:
+    """Summarise the public submodules, types and callables of `mod` as text."""
     layouts_types, callables, direct_mods = [], [], []
     for name in dir(mod):
         obj = getattr(mod, name)
@@ -116,69 +119,51 @@ def cmd_list(mod) -> None:
         elif callable(obj):
             callables.append(name)
 
-    print(f"Module: {mod.__name__}")
+    lines = [f"Module: {mod.__name__}"]
     submods = _discover_submodules(mod)
     if submods:
-        print(f"Submodules ({len(submods)}): {', '.join(submods)}")
+        lines.append(f"Submodules ({len(submods)}): {', '.join(submods)}")
     elif direct_mods:
-        print(f"Submodules ({len(direct_mods)}): {', '.join(sorted(direct_mods))}")
+        lines.append(f"Submodules ({len(direct_mods)}): {', '.join(sorted(direct_mods))}")
     if layouts_types:
-        print(f"Types/Layouts ({len(layouts_types)}): {', '.join(sorted(layouts_types))}")
+        lines.append(f"Types/Layouts ({len(layouts_types)}): {', '.join(sorted(layouts_types))}")
     if callables:
-        print(f"Callables ({len(callables)}): {', '.join(sorted(callables))}")
+        lines.append(f"Callables ({len(callables)}): {', '.join(sorted(callables))}")
+    return "\n".join(lines)
 
 
-def cmd_inspect(mod, symbols: list[str]) -> int:
-    rc = 0
+def show_symbols(mod, symbols: list[str], *, fallback: bool = True) -> tuple[str, list[str]]:
+    """Describe each symbol as text. Returns (stdout text, error lines for unresolved symbols).
+
+    fallback=False restricts lookup to `mod` (explicit -m); otherwise symbols found only in the
+    gluon root package are annotated with where they resolved.
+    """
+    blocks: list[str] = []
+    errors: list[str] = []
     for sym in symbols:
         try:
-            obj = resolve_symbol(mod, sym)
+            obj, found_in = resolve_symbol(mod, sym, fallback=fallback)
         except Exception as exc:
-            print(f"[ERROR] {sym}: {exc}", file=sys.stderr)
-            rc = 1
+            errors.append(f"[ERROR] {sym}: {exc}")
             continue
 
         if inspect.ismodule(obj):
-            cmd_list(obj)
-            print()
+            blocks.append(list_module(obj))
             continue
 
-        sig = _clean_signature(obj)
-        doc = _first_paragraph(obj)
         kind = "class" if inspect.isclass(obj) else "def"
-        print(f"{kind} {sym}{sig}")
+        lines = [f"{kind} {sym}{_clean_signature(obj)}"]
+        doc = _first_paragraph(obj)
         if doc:
-            print(f"  {doc}")
+            lines.append(f"  {doc}")
+        if found_in is not mod and found_in.__name__ == ROOT_PKG:
+            lines.append(f"  (resolved in {ROOT_PKG})")
         if inspect.isclass(obj):
             methods = [
                 m for m, v in inspect.getmembers(obj)
                 if not m.startswith("_") and callable(v)
             ]
             if methods:
-                print(f"  methods: {', '.join(methods)}")
-        print()
-    return rc
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Inspect live Gluon APIs in the current Python environment."
-    )
-    parser.add_argument("symbols", nargs="*", help="Symbol names to inspect (e.g. max sum exp load)")
-    parser.add_argument("-m", "--module", default=None, help="Target module (default: gl)")
-    parser.add_argument("--list", nargs="?", const="__DEFAULT__", default=None, metavar="MODULE",
-                        help="List public APIs and backend submodules of MODULE (default: gl)")
-    args = parser.parse_args(argv)
-
-    if args.list is not None:
-        target = args.module if args.list == "__DEFAULT__" else args.list
-        cmd_list(resolve_module(target))
-        return 0
-    if not args.symbols:
-        parser.print_help()
-        return 2
-    return cmd_inspect(resolve_module(args.module), args.symbols)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+                lines.append(f"  methods: {', '.join(methods)}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks), errors
