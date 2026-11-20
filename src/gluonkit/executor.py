@@ -1,6 +1,5 @@
 """Command execution entry points and in-process evaluation task loading."""
 
-import ast
 from pathlib import Path
 import platform
 import runpy
@@ -102,21 +101,13 @@ def run_check(eval_path: str, backend: Backend) -> None:
     check_task(task)
 
 
-def read_kernel_path(eval_source: bytes, eval_path: Path) -> Path:
-    """Return the kernel file named by the KERNEL_PATH string literal (relative to the eval script)."""
-    tree = ast.parse(eval_source, filename=str(eval_path))
-    value = None
-    for node in tree.body:
-        if (isinstance(node, ast.Assign) and len(node.targets) == 1
-                and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "KERNEL_PATH"):
-            if not (isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)):
-                raise ValueError("KERNEL_PATH must be a string literal")
-            value = node.value.value
-    if value is None:
-        raise ValueError(f"{eval_path} must declare KERNEL_PATH = \"<kernel file>\" for gk bench")
-    kernel = (eval_path.parent / value).resolve()
+def resolve_kernel_path(eval_path: Path) -> Path:
+    """Resolve the paired `<name>.py` kernel file next to an `eval_<name>.py` evaluation script."""
+    if not (eval_path.name.startswith("eval_") and eval_path.suffix == ".py" and len(eval_path.stem) > 5):
+        raise ValueError(f"Evaluation script must be named eval_<kernel>.py: {eval_path.name}")
+    kernel = (eval_path.parent / eval_path.name.removeprefix("eval_")).resolve()
     if not kernel.is_file():
-        raise ValueError(f"KERNEL_PATH file not found: {kernel}")
+        raise ValueError(f"Kernel file not found: {kernel}")
     return kernel
 
 
@@ -152,14 +143,14 @@ def run_bench(eval_path: str, backend: Backend, *, trace: bool = False, no_basel
     if not path.is_file():
         raise ValueError(f"Evaluation script not found: {path}")
     eval_source = path.read_bytes()
-    kernel_file = read_kernel_path(eval_source, path)
+    kernel_file = resolve_kernel_path(path)
     kernel_source = kernel_file.read_bytes()
     history = History()
     parent = history.get(parent_id)["id"] if parent_id is not None else None
 
     _, task = _prepare_task(str(path), backend)
     if not _module_loaded_from(kernel_file):
-        raise ValueError(f"KERNEL_PATH {kernel_file} was not imported by the evaluation script")
+        raise ValueError(f"Kernel file {kernel_file} was not imported by the evaluation script")
     info = backend.probe()
     peak_entry = PeakStore(history.root).get(info)
     calibrated_peaks = (peak_entry or {}).get("peaks")

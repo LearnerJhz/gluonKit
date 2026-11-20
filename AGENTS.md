@@ -1,6 +1,6 @@
 # GluonKit Agent 指南
 
-使用 `gk` CLI 开发并调优 `KERNEL_PATH` 指定的 Gluon GPU kernel（如 `examples/gemm/gemm.py`），在保证数值正确的前提下提升性能。
+使用 `gk` CLI 开发并调优与评测脚本 `eval_<name>.py` 同目录配对的 Gluon GPU kernel `<name>.py`（如 `examples/gemm/gemm.py`），在保证数值正确的前提下提升性能。
 
 > 以本文件与 `.venv/bin/gk --help` 为唯一真值来源；`README.md`、`architecture.md`、`plan.md` 可能包含旧版本描述，请勿参考其中的旧命令或字段。
 

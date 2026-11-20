@@ -111,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
         "bench",
         help="Measure mean GPU kernel time and record it in history (roofline uses calibrated peaks)",
     )
-    bench_parser.add_argument("eval_path", help="Python script defining prepare(device) and KERNEL_PATH")
+    bench_parser.add_argument("eval_path", help="Python script (eval_<name>.py) defining prepare(device)")
     bench_parser.add_argument("--note", help="What changed and why (stored in history)")
     bench_parser.add_argument("--parent", help="Parent history record id")
     bench_parser.add_argument("--trace", action="store_true", help="Export the measured run's Chrome trace")
