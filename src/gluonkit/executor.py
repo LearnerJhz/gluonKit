@@ -4,6 +4,7 @@ from pathlib import Path
 import runpy
 import sys
 
+from gluonkit.core.baseline import BaselineStore
 from gluonkit.core.bencher import record_baseline, run_benchmark
 from gluonkit.core.checker import check_task
 from gluonkit.core.history import History, summarize_record
@@ -11,13 +12,6 @@ from gluonkit.core.peaks import PeakStore, device_key
 from gluonkit.core.storage import gluonkit_dir, normalize_path
 from gluonkit.interfaces.backend import Backend
 
-_BASELINE_MISS_REASONS = {
-    "not_found": "no stored baseline for this eval",
-    "eval_changed": "stored baseline is stale (eval script changed)",
-    "env_changed": "stored baseline is stale (runtime env changed)",
-    "options_changed": "stored baseline is stale (measurement options changed)",
-    "invalid": "stored baseline is invalid",
-}
 _BRIEF_DETAIL_KEYS = ("unit", "method", "problem", "theoretical_gbps", "efficiency_pct", "calibrated_at")
 
 
@@ -82,9 +76,8 @@ def _brief_detail(detail: dict) -> dict:
     return {key: detail[key] for key in _BRIEF_DETAIL_KEYS if key in detail}
 
 
-def _baseline_hint(eval_path: str, reason: str) -> str:
-    desc = _BASELINE_MISS_REASONS.get(reason, "stored baseline unavailable")
-    return f"{desc}; run `.venv/bin/gk bench {eval_path} --baseline` to measure and store ref"
+def _baseline_hint(eval_path: str) -> str:
+    return f"no stored baseline for this eval; run `.venv/bin/gk baseline {eval_path}` to measure and store ref"
 
 
 def run_probe(backend: Backend, *, root: str | Path | None = None) -> dict:
@@ -133,16 +126,21 @@ def run_check(eval_path: str, backend: Backend) -> None:
     check_task(task)
 
 
-def run_bench_baseline(
+def run_baseline(
     eval_path: str,
     backend: Backend,
     *,
     root: str | Path | None = None,
 ) -> dict:
-    """Measure only `ref()` and persist the baseline JSON under `.gluonkit/baseline/`."""
-    path, eval_source = _read_eval_file(eval_path)
+    """Return existing baseline JSON if present, otherwise measure `ref()` once and save it."""
+    path = Path(eval_path).resolve()
+    if not path.is_file():
+        raise ValueError(f"Evaluation script not found: {path}")
+    existing = BaselineStore(root).load_record(path)
+    if existing is not None:
+        return existing
     _, task = _prepare_task(path, backend)
-    return record_baseline(path, task, backend, eval_source=eval_source, root=root)
+    return record_baseline(path, task, backend, root=root)
 
 
 def run_bench(
@@ -150,18 +148,11 @@ def run_bench(
     backend: Backend,
     *,
     trace: bool = False,
-    baseline: bool = False,
-    no_baseline: bool = False,
     note: str | None = None,
     parent_id: str | None = None,
     root: str | Path | None = None,
 ) -> dict:
-    """Measure mean GPU kernel time (or only ref when `baseline=True`), comparing against stored baseline."""
-    if baseline:
-        if no_baseline or trace or note is not None or parent_id is not None:
-            raise ValueError("--baseline cannot be combined with --no-baseline, --note, --parent, or --trace")
-        return run_bench_baseline(eval_path, backend, root=root)
-
+    """Measure mean GPU kernel time and compare against stored baseline."""
     path, eval_source = _read_eval_file(eval_path)
     kernel_file = resolve_kernel_path(path)
     kernel_source = kernel_file.read_bytes()
@@ -169,7 +160,7 @@ def run_bench(
     if not _module_loaded_from(kernel_file):
         raise ValueError(f"Kernel file {kernel_file} was not imported by the evaluation script")
 
-    response, miss_reason = run_benchmark(
+    response, missing_baseline = run_benchmark(
         path,
         kernel_file,
         task,
@@ -177,13 +168,12 @@ def run_bench(
         eval_source=eval_source,
         kernel_source=kernel_source,
         trace=trace,
-        use_baseline=not no_baseline,
         note=note,
         parent_id=parent_id,
         root=root,
     )
-    if miss_reason is not None:
-        response["baseline_hint"] = _baseline_hint(normalize_path(path, root), miss_reason)
+    if missing_baseline:
+        response["baseline_hint"] = _baseline_hint(normalize_path(path, root))
     return response
 
 

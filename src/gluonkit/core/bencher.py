@@ -9,10 +9,9 @@ import tempfile
 from typing import Any, Iterator
 
 from gluonkit.core.baseline import BaselineStore, baseline_env, is_valid_ms
-from gluonkit.core.history import History, source_hash
+from gluonkit.core.history import History
 from gluonkit.core.peaks import PeakStore, resolve_peaks
 from gluonkit.core.roofline import calculate_roofline, validate_metadata
-from gluonkit.core.storage import normalize_path
 from gluonkit.interfaces.backend import Backend
 from gluonkit.interfaces.types import BenchResult
 
@@ -22,7 +21,7 @@ DEFAULT_WARMUP = 10
 
 @dataclass(frozen=True)
 class BenchOptions:
-    """Sampling options shared between `gk bench` and `gk bench --baseline`."""
+    """Sampling options shared between `gk bench` and `gk baseline`."""
 
     warmup: int = DEFAULT_WARMUP
     iters: int = DEFAULT_ITERS
@@ -57,7 +56,7 @@ def measure_baseline(
     opts = (options or BenchOptions()).with_overrides(iters=iters, warmup=warmup)
     ref = task.get("ref")
     if not callable(ref):
-        raise ValueError("Evaluation script must define callable 'ref' for --baseline")
+        raise ValueError("Evaluation script must define callable 'ref' for baseline")
     measured = backend.profile(ref, opts.iters, opts.warmup, flush_l2=opts.flush_l2)
     if not is_valid_ms(measured.avg_ms):
         raise RuntimeError(f"baseline ref() produced non-positive device kernel time: {measured.avg_ms!r}")
@@ -148,30 +147,26 @@ def record_baseline(
     task: dict,
     backend: Backend,
     *,
-    eval_source: bytes,
     root: str | Path | None = None,
     options: BenchOptions | None = None,
 ) -> dict[str, Any]:
-    """Measure `task['ref']`, verify eval source stability, and persist to `.gluonkit/baseline/`."""
+    """Return existing baseline file if present, otherwise measure `task['ref']` once and save."""
+    store = BaselineStore(root)
+    existing = store.load_record(eval_path)
+    if existing is not None:
+        return existing
+
     opts = options or BenchOptions()
     info = backend.probe()
     measured_baseline = measure_baseline(task, backend, options=opts)
-    _verify_unchanged(
-        [(eval_path, eval_source)],
-        "Evaluation source changed during baseline measurement; not recorded, rerun",
-    )
-    store = BaselineStore(root)
-    eval_rel = normalize_path(eval_path, store.root)
     saved_path, entry = store.save(
-        eval_path=eval_rel,
-        eval_source_hash=source_hash(eval_source),
+        eval_path,
         env=baseline_env(info),
         measurement_options=opts.to_baseline_dict(),
         baseline=measured_baseline,
     )
     return {
         "file": store.display_path(saved_path),
-        "eval_path": eval_rel,
         **entry,
     }
 
@@ -185,13 +180,12 @@ def run_benchmark(
     eval_source: bytes,
     kernel_source: bytes,
     trace: bool = False,
-    use_baseline: bool = True,
     note: str | None = None,
     parent_id: str | None = None,
     root: str | Path | None = None,
     options: BenchOptions | None = None,
-) -> tuple[dict[str, Any], str | None]:
-    """Run target benchmark, persist history + source snapshots, and report baseline miss reason."""
+) -> tuple[dict[str, Any], bool]:
+    """Run target benchmark, persist history + source snapshots, and report missing baseline."""
     opts = options or BenchOptions()
     history = History(root=root)
     parent = history.get(parent_id)["id"] if parent_id is not None else None
@@ -200,15 +194,7 @@ def run_benchmark(
     calibrated_peaks = (peak_entry or {}).get("peaks")
 
     eval_rel = history.normalize_path(eval_path)
-    stored_baseline = None
-    miss_reason = None
-    if use_baseline:
-        stored_baseline, miss_reason = BaselineStore(history.root).lookup(
-            eval_path=eval_rel,
-            eval_source_hash=source_hash(eval_source),
-            env=baseline_env(info),
-            measurement_options=opts.to_baseline_dict(),
-        )
+    stored_baseline = BaselineStore(history.root).lookup(eval_path)
 
     with _trace_session(trace, history.directory) as trace_path:
         result = bench_task(
@@ -245,7 +231,5 @@ def run_benchmark(
             "summary": summary,
         })
 
-    reportable_miss = (
-        miss_reason if (use_baseline and stored_baseline is None and task.get("ref") is not None) else None
-    )
-    return {"history_id": record["id"], **bench}, reportable_miss
+    missing_baseline = stored_baseline is None and task.get("ref") is not None
+    return {"history_id": record["id"], **bench}, missing_baseline

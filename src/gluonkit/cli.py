@@ -7,6 +7,7 @@ from typing import Any
 from gluonkit.backends.nvidia.backend import NvidiaBackend
 from gluonkit.executor import (
     run_bank_conflicts,
+    run_baseline,
     run_bench,
     run_check,
     run_dump_info,
@@ -63,11 +64,12 @@ def _dispatch(args: argparse.Namespace, backend: Backend) -> Any:
         return run_dump_info(args.eval_path, backend)
     if args.command == "check":
         return run_check(args.eval_path, backend)
+    if args.command == "baseline":
+        return run_baseline(args.eval_path, backend)
     if args.command == "bench":
         return run_bench(
             args.eval_path, backend,
-            trace=args.trace, baseline=args.baseline, no_baseline=args.no_baseline,
-            note=args.note, parent_id=args.parent,
+            trace=args.trace, note=args.note, parent_id=args.parent,
         )
     if args.command == "history":
         return run_history(args.target, limit=args.limit)
@@ -107,6 +109,12 @@ def main(argv: list[str] | None = None) -> int:
                                        help="Compile (JIT) and check correctness against ref")
     check_parser.add_argument("eval_path", help="Python script defining prepare(device)")
 
+    baseline_parser = commands.add_parser(
+        "baseline",
+        help="Measure and store ref baseline once if missing",
+    )
+    baseline_parser.add_argument("eval_path", help="Python script (eval_<name>.py) defining prepare(device)")
+
     bench_parser = commands.add_parser(
         "bench",
         help="Measure mean GPU kernel time and record it in history (roofline uses calibrated peaks)",
@@ -115,13 +123,6 @@ def main(argv: list[str] | None = None) -> int:
     bench_parser.add_argument("--note", help="What changed and why (stored in history)")
     bench_parser.add_argument("--parent", help="Parent history record id")
     bench_parser.add_argument("--trace", action="store_true", help="Export the measured run's Chrome trace")
-    baseline_group = bench_parser.add_mutually_exclusive_group()
-    baseline_group.add_argument(
-        "--baseline",
-        action="store_true",
-        help="Measure and store ref baseline only (without running target kernel or recording history)",
-    )
-    baseline_group.add_argument("--no-baseline", action="store_true", help="Do not compare against stored baseline")
 
     history_parser = commands.add_parser("history", help="List recorded bench experiments")
     history_parser.add_argument("target", nargs="?", help="Optional kernel or eval path filter")
