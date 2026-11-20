@@ -218,15 +218,7 @@ def run_benchmark(
             "eval_source_hash": history.store_source(eval_source),
             "parent_id": parent,
             "note": note,
-            "platform": info.platform,
-            "arch": info.arch,
             "device_info": info.to_dict(),
-            "env": {
-                "python": platform.python_version(),
-                "torch": info.torch_version,
-                "triton": info.compiler_version,
-            },
-            "measurement_options": opts.to_history_dict(getattr(backend, "timing_method", None)),
             "bench": bench,
             "summary": summary,
         })

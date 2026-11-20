@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import uuid
 
-from gluonkit.core.storage import gluonkit_dir, normalize_path, now_iso, resolve_root
+from gluonkit.core.storage import gluonkit_dir, normalize_path, resolve_root
 
 
 def source_hash(source: bytes) -> str:
@@ -17,15 +17,22 @@ def _extract_metrics(bench: dict) -> dict:
     if "metrics" not in bench:
         return {
             "avg_ms": bench.get("avg_ms", bench.get("device_time_ms")),
+            "median_ms": bench.get("median_ms"),
+            "min_ms": bench.get("min_ms"),
+            "std_ms": bench.get("std_ms"),
             "baseline_ms": bench.get("baseline_time_ms", bench.get("baseline_ms")),
             "speedup": bench.get("speedup_vs_baseline", bench.get("speedup")),
             "tflops": bench.get("tflops"),
             "gbps": bench.get("gbps"),
             "roofline": bench.get("roofline_pct", bench.get("roofline")),
         }
+    kernel = bench.get("kernel") or {}
     metrics = bench["metrics"]
     return {
-        "avg_ms": (bench.get("kernel") or {}).get("avg"),
+        "avg_ms": kernel.get("avg"),
+        "median_ms": kernel.get("median"),
+        "min_ms": kernel.get("min"),
+        "std_ms": kernel.get("std"),
         "baseline_ms": (bench.get("baseline") or {}).get("avg_ms"),
         "speedup": metrics.get("speedup"),
         "tflops": metrics.get("tflops"),
@@ -71,7 +78,6 @@ class History:
     def save(self, record: dict) -> dict:
         record = dict(record)
         record.setdefault("id", uuid.uuid4().hex[:8])
-        record.setdefault("timestamp", now_iso())
         self.directory.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")

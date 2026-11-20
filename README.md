@@ -226,7 +226,7 @@ pip install -e .
 - `.gluonkit/peaks.json`：按设备存储的标定峰值
 - `.gluonkit/baseline/baseline_<name>.json`：`gk baseline <eval.py>` 存储的 `ref()` 基线测量结果
 - `.gluonkit/sources/<sha256>.py`：评测脚本与算子源码内容寻址快照
-- `.gluonkit/dump_info/<eval_stem>/<kernel>/`：`kernel.ttgir`、`kernel.llir`、`kernel.ptx`
+- `.gluonkit/dump_info/<eval_stem>/<kernel>/<hash>/`：`kernel.ttgir`、`kernel.llir`、`kernel.ptx`
 - `.gluonkit/traces/bench-*/trace.json`：`gk bench --trace` 导出的 Chrome trace
 
 ---

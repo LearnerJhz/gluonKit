@@ -119,7 +119,10 @@ def dump_info(call: Callable[[], object], artifact_dir: str | Path) -> dict[str,
             while key in artifacts:
                 key = f"{name}_{index}"
                 index += 1
-            artifacts[key] = _write_kernel_ir(kernel, Path(artifact_dir).resolve() / key)
+            kernel_dir = Path(artifact_dir).resolve() / key
+            if kernel.hash:
+                kernel_dir = kernel_dir / str(kernel.hash)[:12]
+            artifacts[key] = _write_kernel_ir(kernel, kernel_dir)
             captured[key] = kernel
             seen.add(kernel.hash)
         return original(kernel, *args, **kwargs)

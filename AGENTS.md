@@ -38,8 +38,8 @@ Gluon 是 Triton 的底层 GPU 编程接口。每个 program 处理一个 tile�
 | `gk baseline <eval.py>` | 若 `.gluonkit/baseline/baseline_<name>.json` 尚不存在则测量一次 `ref()` 并存入；已存在时直接返回，不重测 | `file`, `env`, `measurement_options`, `measured_at`, `baseline` |
 | `gk bench <eval.py> [--note "..."] [--parent <id>] [--trace]` | 默认只对目标 kernel 预热 10 次、测量 100 次，读取已存基线算 `speedup` 并写入 `.gluonkit/` | `history_id`, `trace_path`, `kernel`, `metrics`, `baseline`, `peaks` |
 | `gk api list [module]` / `gk api show [-m module] <symbol>...` | 离线查询本机 `triton.experimental.gluon` 的真实 API（无需 GPU）。**例外：输出纯文本，不是 JSON 信封**；`list` 列出子模块/类型/函数，`show` 输出签名与首段 docstring；显式 `-m` 时只在该模块内查找（不回退），未指定时按 `gl` → `gluon` 查找，命中根包的符号会标注 `(resolved in ...)`；符号查不到时 stderr 输出 `[ERROR] <符号>: ...` 且退出码为 1 | 纯文本 |
-| `gk dump-info <eval.py>` | 运行一次，导出后端中间产物（如 NVIDIA 导出 `ttgir`/`llir`/`ptx`）到 `.gluonkit/dump_info/<eval名>/<kernel名>/` | `artifacts`（文件路径）, `summary`（`n_regs`, `n_spills`, `n_max_threads`, `shared_bytes`, `allocated_shared_bytes`, `num_warps`, `blocks_per_sm`, `occupancy_pct`） |
-| `gk history [<kernel_or_eval>] [--limit N]` | 查看已记录的 `bench` 实验摘要与资源占用 | `total`, `records`（`id`, `parent_id`, `trace_path`, `note`, `avg_ms`, `speedup`, `tflops`, `gbps`, `roofline`, `summary`） |
+| `gk dump-info <eval.py>` | 运行一次，导出后端中间产物（如 NVIDIA 导出 `ttgir`/`llir`/`ptx`）到 `.gluonkit/dump_info/<eval名>/<kernel名>/<hash>/` | `artifacts`（文件路径）, `summary`（`n_regs`, `n_spills`, `n_max_threads`, `shared_bytes`, `allocated_shared_bytes`, `num_warps`, `blocks_per_sm`, `occupancy_pct`） |
+| `gk history [<kernel_or_eval>] [--limit N]` | 查看已记录的 `bench` 实验摘要与资源占用。`.gluonkit/history.jsonl` 是 `gk bench` 生成的原始实验记录，可直接读取 | `total`, `records`（`id`, `parent_id`, `trace_path`, `note`, `avg_ms`, `median_ms`, `min_ms`, `std_ms`, `speedup`, `tflops`, `gbps`, `roofline`, `summary`） |
 | `gk restore <id>` | 按历史快照恢复对应的 `kernel` 文件（支持唯一 ID 前缀） | `id`, `kernel_path`, `kernel_source_hash`, `previous_hash`, `changed` |
 
 `kernel` 包含 `name` 和毫秒计的 `avg`、`median`、`min`、`std`。`metrics` 包含 `speedup`、`tflops`、`gbps`、`roofline`（峰值利用率百分比，数据不足时为 `null`）和 `bound_by`（`compute` / `memory` / `null`）。`gk bench` 默认只运行待测 kernel，不重跑 `ref()`，而是直接读取 `.gluonkit/baseline/baseline_<name>.json` 中已存的基线；`baseline` 返回 `kernel_name` 与 `avg_ms`（尚未生成该文件时报错提示先跑 `gk baseline`）。启用 `--trace` 时只导出待测算子的 `trace.json`，路径见顶层 `trace_path`。
@@ -49,7 +49,7 @@ Gluon 是 Triton 的底层 GPU 编程接口。每个 program 处理一个 tile�
 ## 硬规则
 
 1. **禁止篡改评测条件**：调优期间只修改算子文件（如 `examples/gemm/gemm.py`），禁止修改 `eval_*.py` 中的输入、参考实现 `ref`、容差 `atol`/`rtol`、`flops`/`bytes_moved` 或 `peaks`/`compute_mode`。调优期间也不要重跑 `scripts/calibrate_peaks.py`（会改变 roofline 分母，使前后轮不可比）。
-2. **先 `check` 后 `bench`**：`gk bench` 当前不会自动跑正确性校验。每次修改算子后**必须先通过 `gk check`**，再执行 `gk bench`；未过 `check` 的测速结果视为无效。
+2. **先 `baseline` / `check` 后 `bench`**：首次对某 `eval_<name>.py` 测速前，需先执行 `gk baseline <eval.py>` 生成 `.gluonkit/baseline/baseline_<name>.json`（已存在时直接复用）。此外 `gk bench` 当前不会自动跑正确性校验，每次修改算子后**必须先通过 `gk check`**，再执行 `gk bench`；未过 `check` 的测速结果视为无效。
 3. **禁止盲猜 Gluon API**：写代码前查 `gluon-api` skill，遇到未覆盖的原语用 `.venv/bin/gk api list|show` 查询，或直接读 `.venv/lib/python3.12/site-packages/triton/experimental/gluon/` 源码核实签名。
 4. **单变量迭代与版本保留**：每次修改只验证一个明确假设。通过校验且确认更快后保留。退化或失败时用 `gk restore <id>` 撤销本轮算子改动，保留工作区已有修改。`bench --parent <id>` 用于关联实验记录，可用 `gk history` 回顾多轮指标与资源变化。
 5. **按算子输入约定处理边界**：任务明确固定 shape、dtype 和布局时，可据此特化，并用原评测的 `gk check` 校验数值。选定 tile 能整除的维度可省去对应边界 mask，有余数的维度仍须处理尾块。向量化或异步拷贝还需满足实际地址与步长的对齐要求。若接口承诺支持多种尺寸，则保留相应边界处理，按支持范围补测非整除尺寸或 `K < BK`。
