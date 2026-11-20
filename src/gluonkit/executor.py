@@ -15,12 +15,6 @@ from gluonkit.interfaces.backend import Backend
 _BRIEF_DETAIL_KEYS = ("unit", "method", "problem", "theoretical_gbps", "efficiency_pct", "calibrated_at")
 
 
-def _ensure_available(backend: Backend) -> None:
-    available, reason = backend.available()
-    if not available:
-        raise RuntimeError(reason)
-
-
 def _read_eval_file(eval_path: str) -> tuple[Path, bytes]:
     path = Path(eval_path).resolve()
     if not path.is_file():
@@ -48,9 +42,6 @@ def load_task(eval_path: str, device: str) -> dict:
 
 def _prepare_task(eval_path: str | Path, backend: Backend) -> tuple[Path, dict]:
     path = Path(eval_path).resolve()
-    if not path.is_file():
-        raise ValueError(f"Evaluation script not found: {path}")
-    _ensure_available(backend)
     return path, load_task(str(path), backend.device)
 
 
@@ -77,8 +68,7 @@ def _brief_detail(detail: dict) -> dict:
 
 
 def run_probe(backend: Backend, *, root: str | Path | None = None) -> dict:
-    """Verify backend availability, probe device information and attach calibrated peaks."""
-    _ensure_available(backend)
+    """Probe device information and attach calibrated peaks."""
     info = backend.probe()
     store = PeakStore(root)
     entry = store.get(info)
