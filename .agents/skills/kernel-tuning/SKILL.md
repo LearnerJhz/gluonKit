@@ -12,8 +12,9 @@ description: Systematic GPU kernel performance tuning loop using gk probe, check
 1. **摸底（会话开始跑一次）**
    - `.venv/bin/gk probe`：记录 `arch`、`sm_count`、共享内存上限（如 NVIDIA 后端返回的 `smem_per_block_optin`）以及已标定峰值。
 2. **建基线**
-   - `.venv/bin/gk check <eval.py>` -> `.venv/bin/gk bench <eval.py> --note "baseline"` -> `.venv/bin/gk dump-info <eval.py>`
-   - 记录基线 `history_id`、`kernel.name`、`kernel.avg`、`kernel.std`、`kernel.min`、`kernel.median`、`baseline.avg_ms`、`metrics.speedup` 以及 `summary`（`n_regs`、`n_spills`、`shared_bytes`、`allocated_shared_bytes`、`num_warps`、`blocks_per_sm`、`occupancy_pct`；注意不要只看 `n_max_threads` 误判并发）。
+   - `.venv/bin/gk check <eval.py>` -> `.venv/bin/gk bench <eval.py> --baseline`（单独测一次 `ref()` 并存入 `.gluonkit/baseline/`）-> `.venv/bin/gk bench <eval.py> --note "baseline"` -> `.venv/bin/gk dump-info <eval.py>`
+   - 记录基线 `history_id`、`kernel.name`、`kernel.avg`、`kernel.std`、`kernel.min`、`kernel.median`、`baseline.avg_ms`、`baseline.std_ms`、`metrics.speedup` 以及 `summary`（`n_regs`、`n_spills`、`shared_bytes`、`allocated_shared_bytes`、`num_warps`、`blocks_per_sm`、`occupancy_pct`；注意不要只看 `n_max_threads` 误判并发）。
+   - 日常 `gk bench <eval.py>` 默认只测待测算子并直接读取已存基线算 `speedup`；若改动了 `eval_*.py` 或怀疑机器热降频/电源状态变化需要刷新基线，重跑一次 `.venv/bin/gk bench <eval.py> --baseline` 即可。
    - `gk` 将 Triton 编译缓存固定写入 `.gluonkit/triton_cache`（沙盒可直接写入）；首次编译略慢，后续仅在算子源码或编译常量变化时重编（需要强制重编可传 `TRITON_ALWAYS_COMPILE=1`）。
 3. **提假设并单点改动**
    - 每次只改一个明确变量（例如只改 tile size，或只改 pipeline stage 数），记录“改了什么、预期改善什么”。

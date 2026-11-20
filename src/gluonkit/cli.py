@@ -66,7 +66,7 @@ def _dispatch(args: argparse.Namespace, backend: Backend) -> Any:
     if args.command == "bench":
         return run_bench(
             args.eval_path, backend,
-            trace=args.trace, no_baseline=args.no_baseline,
+            trace=args.trace, baseline=args.baseline, no_baseline=args.no_baseline,
             note=args.note, parent_id=args.parent,
         )
     if args.command == "history":
@@ -115,7 +115,13 @@ def main(argv: list[str] | None = None) -> int:
     bench_parser.add_argument("--note", help="What changed and why (stored in history)")
     bench_parser.add_argument("--parent", help="Parent history record id")
     bench_parser.add_argument("--trace", action="store_true", help="Export the measured run's Chrome trace")
-    bench_parser.add_argument("--no-baseline", action="store_true", help="Do not measure ref")
+    baseline_group = bench_parser.add_mutually_exclusive_group()
+    baseline_group.add_argument(
+        "--baseline",
+        action="store_true",
+        help="Measure and store ref baseline only (without running target kernel or recording history)",
+    )
+    baseline_group.add_argument("--no-baseline", action="store_true", help="Do not compare against stored baseline")
 
     history_parser = commands.add_parser("history", help="List recorded bench experiments")
     history_parser.add_argument("target", nargs="?", help="Optional kernel or eval path filter")

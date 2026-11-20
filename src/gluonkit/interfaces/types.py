@@ -65,6 +65,24 @@ class ProfileData:
     def to_dict(self) -> dict:
         return asdict(self)
 
+    def to_kernel_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.kernel_name,
+            "avg": self.avg_ms,
+            "median": self.median_ms,
+            "min": self.min_ms,
+            "std": self.std_ms,
+        }
+
+    def to_baseline_dict(self) -> dict[str, Any]:
+        return {
+            "kernel_name": self.kernel_name,
+            "avg_ms": self.avg_ms,
+            "std_ms": self.std_ms,
+            "min_ms": self.min_ms,
+            "median_ms": self.median_ms,
+        }
+
 
 @dataclass
 class BenchResult:
@@ -77,16 +95,9 @@ class BenchResult:
     peaks: dict[str, Any] | None = None
 
     def to_dict(self) -> dict:
-        profile = self.kernel_profile
         return {
-            "trace_path": profile.trace_path,
-            "kernel": {
-                "name": profile.kernel_name,
-                "avg": profile.avg_ms,
-                "median": profile.median_ms,
-                "min": profile.min_ms,
-                "std": profile.std_ms,
-            },
+            "trace_path": self.kernel_profile.trace_path,
+            "kernel": self.kernel_profile.to_kernel_dict(),
             "metrics": self.metrics,
             "baseline": self.baseline,
             "peaks": self.peaks,

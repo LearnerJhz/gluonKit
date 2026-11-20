@@ -1,67 +1,64 @@
 """Experiment history: `.gluonkit/history.jsonl` plus hashed source snapshots."""
 
-from datetime import datetime
 import hashlib
 import json
 from pathlib import Path
 import uuid
+
+from gluonkit.core.storage import gluonkit_dir, normalize_path, now_iso, resolve_root
 
 
 def source_hash(source: bytes) -> str:
     return hashlib.sha256(source).hexdigest()
 
 
-def _bench_metrics(record: dict) -> dict:
-    """Read comparison metrics from either nested or historical flat bench records."""
-    bench = record.get("bench") or {}
+def _extract_metrics(bench: dict) -> dict:
+    """Extract summary metrics from nested `BenchResult` or legacy flat records."""
     if "metrics" not in bench:
-        return {**bench, "avg_ms": bench.get("avg_ms", bench.get("device_time_ms"))}
+        return {
+            "avg_ms": bench.get("avg_ms", bench.get("device_time_ms")),
+            "baseline_ms": bench.get("baseline_time_ms", bench.get("baseline_ms")),
+            "speedup": bench.get("speedup_vs_baseline", bench.get("speedup")),
+            "tflops": bench.get("tflops"),
+            "gbps": bench.get("gbps"),
+            "roofline": bench.get("roofline_pct", bench.get("roofline")),
+        }
     metrics = bench["metrics"]
     return {
-        "avg_ms": bench["kernel"]["avg"],
-        "baseline_time_ms": (bench.get("baseline") or {}).get("avg_ms"),
-        "speedup_vs_baseline": metrics.get("speedup"),
+        "avg_ms": (bench.get("kernel") or {}).get("avg"),
+        "baseline_ms": (bench.get("baseline") or {}).get("avg_ms"),
+        "speedup": metrics.get("speedup"),
         "tflops": metrics.get("tflops"),
         "gbps": metrics.get("gbps"),
-        "roofline_pct": metrics.get("roofline"),
+        "roofline": metrics.get("roofline"),
     }
 
 
 def summarize_record(record: dict) -> dict:
     """Return a compact, agent-friendly summary of a history record."""
-    metrics = _bench_metrics(record)
+    bench = record.get("bench") or {}
     return {
         "id": record["id"],
         "parent_id": record.get("parent_id"),
         "kernel_path": record.get("kernel_path"),
         "eval_path": record.get("eval_path"),
-        "trace_path": (record.get("bench") or {}).get("trace_path"),
+        "trace_path": bench.get("trace_path"),
         "note": record.get("note"),
-        "avg_ms": metrics.get("avg_ms"),
-        "baseline_ms": metrics.get("baseline_time_ms"),
-        "speedup": metrics.get("speedup_vs_baseline"),
-        "tflops": metrics.get("tflops"),
-        "gbps": metrics.get("gbps"),
-        "roofline": metrics.get("roofline_pct"),
+        **_extract_metrics(bench),
         "summary": record.get("summary"),
     }
 
 
 class History:
     def __init__(self, root: str | Path | None = None):
-        self.root = Path(root or Path.cwd()).resolve()
-        self.directory = self.root / ".gluonkit"
+        self.root = resolve_root(root)
+        self.directory = gluonkit_dir(self.root)
         self.path = self.directory / "history.jsonl"
         self.sources = self.directory / "sources"
 
     def normalize_path(self, path: str | Path) -> str:
         """Project-relative POSIX path when inside the project, otherwise absolute."""
-        candidate = Path(path)
-        resolved = candidate.resolve() if candidate.is_absolute() else (self.root / candidate).resolve()
-        try:
-            return resolved.relative_to(self.root).as_posix()
-        except ValueError:
-            return resolved.as_posix()
+        return normalize_path(path, self.root)
 
     def store_source(self, source: bytes) -> str:
         digest = source_hash(source)
@@ -74,7 +71,7 @@ class History:
     def save(self, record: dict) -> dict:
         record = dict(record)
         record.setdefault("id", uuid.uuid4().hex[:8])
-        record.setdefault("timestamp", datetime.now().astimezone().isoformat(timespec="seconds"))
+        record.setdefault("timestamp", now_iso())
         self.directory.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")

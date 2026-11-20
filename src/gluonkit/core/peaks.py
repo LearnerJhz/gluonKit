@@ -18,12 +18,17 @@ File layout (version 1)::
 re-calibration, so `calibrate_peaks.py --items gbps` only refreshes the bandwidth entry.
 """
 
-from datetime import datetime
-import json
-import os
 from pathlib import Path
 from typing import Any
 
+from gluonkit.core.storage import (
+    atomic_write_json,
+    gluonkit_dir,
+    normalize_path,
+    now_iso,
+    read_json,
+    resolve_root,
+)
 from gluonkit.interfaces.types import ProbeResult
 
 PEAKS_VERSION = 1
@@ -31,6 +36,7 @@ PEAKS_FILENAME = "peaks.json"
 # Calibrated item name = "tflops_" + the task's `compute_mode` (e.g. "fp16" -> "tflops_fp16").
 COMPUTE_PEAK_PREFIX = "tflops_"
 MEMORY_PEAK = "gbps"
+_CORRUPT_HINT = "delete it and rerun scripts/calibrate_peaks.py"
 
 
 def device_key(info: ProbeResult) -> str:
@@ -38,33 +44,25 @@ def device_key(info: ProbeResult) -> str:
     return f"{info.platform}:{info.arch}:{info.device_name}"
 
 
-def _now() -> str:
-    return datetime.now().astimezone().isoformat(timespec="seconds")
-
-
 class PeakStore:
     def __init__(self, root: str | Path | None = None):
-        self.root = Path(root or Path.cwd()).resolve()
-        self.path = self.root / ".gluonkit" / PEAKS_FILENAME
+        self.root = resolve_root(root)
+        self.path = gluonkit_dir(self.root, PEAKS_FILENAME)
 
     def display_path(self) -> str:
-        try:
-            return self.path.relative_to(self.root).as_posix()
-        except ValueError:
-            return self.path.as_posix()
+        return normalize_path(self.path, self.root)
 
     def load(self) -> dict:
         if not self.path.is_file():
             return {"version": PEAKS_VERSION, "devices": {}}
-        try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"{self.path} is not valid JSON ({exc}); delete it and rerun scripts/calibrate_peaks.py") from exc
-        if not isinstance(data, dict) or not isinstance(data.get("devices"), dict):
-            raise ValueError(f"{self.path} has an unknown layout; delete it and rerun scripts/calibrate_peaks.py")
+        data = read_json(self.path, recovery_hint=_CORRUPT_HINT)
+        if not isinstance(data.get("devices"), dict):
+            raise ValueError(f"{self.path} has an unknown layout; {_CORRUPT_HINT}")
         if data.get("version") != PEAKS_VERSION:
-            raise ValueError(f"{self.path} version {data.get('version')!r} is unsupported "
-                             f"(expected {PEAKS_VERSION}); delete it and rerun scripts/calibrate_peaks.py")
+            raise ValueError(
+                f"{self.path} version {data.get('version')!r} is unsupported "
+                f"(expected {PEAKS_VERSION}); {_CORRUPT_HINT}"
+            )
         return data
 
     def get(self, info: ProbeResult) -> dict | None:
@@ -75,7 +73,7 @@ class PeakStore:
         """Merge freshly calibrated items into this device's entry and persist atomically."""
         data = self.load()
         key = device_key(info)
-        now = _now()
+        now = now_iso()
         entry = data["devices"].get(key) or {}
         peaks = dict(entry.get("peaks") or {})
         details = dict(entry.get("details") or {})
@@ -95,11 +93,7 @@ class PeakStore:
             "details": dict(sorted(details.items())),
         }
         data["devices"][key] = entry
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-                       encoding="utf-8")
-        os.replace(tmp, self.path)
+        atomic_write_json(self.path, data)
         return entry
 
 

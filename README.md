@@ -17,7 +17,7 @@ gluonKit/
 │   └── calibrate_peaks.py            # 一次性本机峰值标定脚本（写入 .gluonkit/peaks.json）
 ├── examples/gemm/
 │   ├── gemm.py                       # 示例待调优 Gluon GEMM（FP16 矩阵乘、FP32 累加）
-│   └── eval_gemm.py                  # 示例评测脚本（KERNEL_PATH + prepare）
+│   └── eval_gemm.py                  # 示例评测脚本（prepare 入口，同目录配对 gemm.py）
 └── src/gluonkit/
     ├── __init__.py                   # __version__ = "0.1.0"
     ├── cli.py                        # argparse 入口、环境变量初始化与命令分发
@@ -29,7 +29,8 @@ gluonKit/
     ├── core/
     │   ├── gluon_api.py              # Gluon API 自省：resolve_module/resolve_symbol/list_module/show_symbols（纯文本，无需 GPU）
     │   ├── checker.py                # check_task：torch.testing.assert_close 校验
-    │   ├── bencher.py                # bench_task：warmup/iters 调度、baseline 与汇总
+    │   ├── baseline.py               # BaselineStore（.gluonkit/baseline/*.json 读写与校验）
+    │   ├── bencher.py                # measure_baseline / bench_task：独立基线测量与算子测速汇总
     │   ├── roofline.py               # validate_metadata / calculate_roofline：TFLOP/s、GB/s、Roofline
     │   ├── peaks.py                  # PeakStore（.gluonkit/peaks.json 读写）与 resolve_peaks
     │   └── history.py                # History：.gluonkit/ 实验记录、摘要读取与快照恢复
@@ -112,7 +113,12 @@ gluonKit/
       },
       "baseline": {
         "kernel_name": "...",
-        "avg_ms": 0.129
+        "avg_ms": 0.129,
+        "std_ms": 0.002,
+        "min_ms": 0.126,
+        "median_ms": 0.129,
+        "measured_at": "2026-11-20T13:35:00+08:00",
+        "source": "stored"
       },
       "peaks": {
         "tflops": 17.07,
@@ -158,7 +164,7 @@ class Backend(Protocol):
 | `gk api list [module]` / `gk api show [-m module] <symbol>...` | `-m` | 自省 `triton.experimental.gluon` 的公开 API；**纯文本输出，不走 JSON 信封**；显式 `-m` 时只在该模块内查找，未指定时按 `gl` → `gluon` 回退（命中根包会标注来源）；符号解析失败时 stderr 输出 `[ERROR]` 行并以退出码 1 结束 |
 | `gk dump-info <eval.py>` | 无 | 临时 hook `CompiledKernel.launch_metadata`，按 `kernel.hash` 去重导出 `ttgir`/`llir`/`ptx` 并计算寄存器与 occupancy 资源摘要 |
 | `gk check <eval.py>` | 无 | 运行一次 `run()` 与 `ref()`，用 `torch.testing.assert_close(..., atol=atol, rtol=rtol)` 校验数值（默认 `1e-2`） |
-| `gk bench <eval.py>` | `--note`, `--parent`, `--trace`, `--no-baseline` | 预热 10 次、实测 100 次；合并评测/标定峰值计算 `roofline`/`bound_by`；校验 `KERNEL_PATH` 已导入且测量期间源码未变；写入历史与双源码快照，返回 `history_id` 与测量结果 |
+| `gk bench <eval.py>` | `--baseline`, `--note`, `--parent`, `--trace`, `--no-baseline` | 传入 `--baseline` 时仅测量一次 `ref()` 并存入 `.gluonkit/baseline/`；常规模式仅测量待测 kernel，读取匹配的已存基线计算 `speedup`（无有效基线且有 `ref` 时返回 `baseline: null` 与 `baseline_hint`），写入历史与双源码快照 |
 | `gk history [<kernel_or_eval>]` | `--limit N` | 列出已记录的 `bench` 实验摘要与资源 `summary`，支持按 `kernel_path` / `eval_path` 筛选与截断最近 N 条 |
 | `gk restore <id>` | 无 | 按完整 ID 或唯一前缀查找记录，校验 `.gluonkit/sources/<sha256>.py` 完整性后将对应 `kernel` 源码恢复回 `kernel_path` |
 
@@ -176,16 +182,16 @@ class Backend(Protocol):
 4. **实验历史与恢复（[history.py](src/gluonkit/core/history.py)）**
    - `gk bench` 将完整记录追加到 `.gluonkit/history.jsonl`，并将评测与算子源码按 SHA256 存入 `.gluonkit/sources/<sha256>.py`。
    - `History` 提供 `store_source()`、`save()`、`get()`（精确或唯一前缀）、`list()`（支持 `kernel` 或 `target` 筛选）与 `restore()`；`summarize_record()` 兼容历史平铺格式与现行嵌套 `BenchResult` 格式。
+5. **独立基线存储（[baseline.py](src/gluonkit/core/baseline.py)）**
+   - `BaselineStore` 按 `eval_path` 哈希与 `eval_source_hash` 原子读写 `.gluonkit/baseline/<eval_stem>-<path_hash>-<src_hash>.json`，JSON 内容仅保留跨平台通用字段（`env`、`measurement_options`、`measured_at`、`baseline`），不强依赖特定平台的设备型号或架构字段。
 
 ---
 
 ## 5. 评测脚本约定
 
-由 [executor.py](src/gluonkit/executor.py) 通过 `runpy.run_path` 在当前进程加载并调用 `prepare(device)`（算子源码不依赖 GluonKit）：
+评测脚本命名为 `eval_<name>.py`，自动配对同目录下的算子文件 `<name>.py`。由 [executor.py](src/gluonkit/executor.py) 通过 `runpy.run_path` 在当前进程加载并调用 `prepare(device)`（算子源码不依赖 GluonKit）：
 
 ```python
-KERNEL_PATH = "gemm.py"  # gk bench 必需：相对当前评测脚本的待调优算子字面量路径
-
 def prepare(device: str) -> dict:
     return {
         "run": lambda: ...,          # 必需：无参待测调用
@@ -223,6 +229,7 @@ pip install -e .
 - `.gluonkit/triton_cache/`：Triton 编译缓存
 - `.gluonkit/history.jsonl`：每次 `gk bench` 的实验记录
 - `.gluonkit/peaks.json`：按设备存储的标定峰值
+- `.gluonkit/baseline/<eval_stem>-<path_hash>-<src_hash>.json`：`gk bench <eval.py> --baseline` 存储的 `ref()` 基线测量结果
 - `.gluonkit/sources/<sha256>.py`：评测脚本与算子源码内容寻址快照
 - `.gluonkit/dump_info/<eval_stem>/<kernel>/`：`kernel.ttgir`、`kernel.llir`、`kernel.ptx`
 - `.gluonkit/traces/bench-*/trace.json`：`gk bench --trace` 导出的 Chrome trace
@@ -232,6 +239,6 @@ pip install -e .
 ## 7. 已知局限与待完善项
 
 - **单 kernel 假定**：`_collect_kernels()` 会累加同次迭代内所有设备 kernel 的耗时并记录首个 `kernel_name`，尚未对零 kernel 或多 kernel 情况做显式拦截或拆分。
-- **`ref` trace 导出**：`--trace` 仅导出待测 `run()` 的 `trace.json`，`baseline` 只返回 `kernel_name` 和 `avg_ms`。
+- **`ref` trace 导出**：`--trace` 仅导出待测 `run()` 的 `trace.json`，`baseline` 返回 `kernel_name`、`avg_ms`、`std_ms`、`min_ms`、`median_ms` 等统计信息。
 - **历史对比与恢复增强**：`gk history` 与 `gk restore` 尚未提供组内最优筛选（`best`）、两轮实验指标与源码差异（`diff`）以及 `restore` 覆盖前对未入库修改的自动备份。
 - **测量、校验与测试补全**：`run_bench()` 暂未内置自动调用 `check_task` 或记录校验凭据；`--flush-l2` 暂未从 CLI 透传；`tests/` 目录与自动化测试集尚未建立。
