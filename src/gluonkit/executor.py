@@ -6,16 +6,16 @@ import sys
 
 from gluonkit.core.baseline import BaselineStore
 from gluonkit.core.bencher import record_baseline, run_benchmark
-from gluonkit.core.checker import check_task
-from gluonkit.core.history import History, summarize_record
+from gluonkit.core.checker import CheckStore, check_task
+from gluonkit.core.history import History, _extract_metrics, source_hash, summarize_record
 from gluonkit.core.peaks import PeakStore, device_key
-from gluonkit.core.storage import gluonkit_dir
+from gluonkit.core.storage import gluonkit_dir, normalize_path
 from gluonkit.interfaces.backend import Backend
 
 _BRIEF_DETAIL_KEYS = ("unit", "method", "problem", "theoretical_gbps", "efficiency_pct", "calibrated_at")
 
 
-def _read_eval_file(eval_path: str) -> tuple[Path, bytes]:
+def _read_eval_file(eval_path: str | Path) -> tuple[Path, bytes]:
     path = Path(eval_path).resolve()
     if not path.is_file():
         raise ValueError(f"Evaluation script not found: {path}")
@@ -106,27 +106,72 @@ def run_dump_info(eval_path: str, backend: Backend) -> dict:
     return backend.dump_info(task["run"], gluonkit_dir(None, "dump_info", path.stem))
 
 
-def run_check(eval_path: str, backend: Backend) -> None:
-    """Load task, JIT-compile via run(), and verify numerical correctness against ref()."""
-    _, task = _prepare_task(eval_path, backend)
-    check_task(task)
+def run_check(eval_path: str, backend: Backend, *, root: str | Path | None = None) -> dict:
+    """Load task, JIT-compile via run(), verify numerical correctness against ref(), and store receipt."""
+    path, eval_source = _read_eval_file(eval_path)
+    eval_rel = normalize_path(path, root)
+    eval_hash = source_hash(eval_source)
+    kernel_rel: str | None = None
+    kernel_hash: str | None = None
+    try:
+        kernel_file = resolve_kernel_path(path)
+        kernel_rel = normalize_path(kernel_file, root)
+        kernel_hash = source_hash(kernel_file.read_bytes())
+    except ValueError:
+        pass
+
+    _, task = _prepare_task(path, backend)
+    dev_key: str | None = None
+    try:
+        dev_key = device_key(backend.probe())
+    except Exception:
+        pass
+
+    result = check_task(
+        task,
+        eval_path=eval_rel,
+        eval_source_hash=eval_hash,
+        kernel_path=kernel_rel,
+        kernel_source_hash=kernel_hash,
+        device_key=dev_key,
+    )
+    if kernel_hash is not None:
+        CheckStore(root).save_receipt(result)
+    return result.to_dict()
 
 
 def run_baseline(
     eval_path: str,
     backend: Backend,
     *,
+    refresh: bool = False,
     root: str | Path | None = None,
 ) -> dict:
-    """Return existing baseline JSON if present, otherwise measure `ref()` once and save it."""
-    path = Path(eval_path).resolve()
-    if not path.is_file():
-        raise ValueError(f"Evaluation script not found: {path}")
-    existing = BaselineStore(root).load_record(path)
-    if existing is not None:
-        return existing
+    """Return existing valid baseline JSON if present (and not refresh), otherwise measure `ref()` and save."""
+    path, eval_source = _read_eval_file(eval_path)
+    eval_hash = source_hash(eval_source)
+    if not refresh:
+        dev_key: str | None = None
+        try:
+            dev_key = device_key(backend.probe())
+        except Exception:
+            pass
+        existing = BaselineStore(root).load_record(
+            path,
+            eval_source_hash=eval_hash,
+            device_key=dev_key,
+        )
+        if existing is not None:
+            return existing
     _, task = _prepare_task(path, backend)
-    return record_baseline(path, task, backend, root=root)
+    return record_baseline(
+        path,
+        task,
+        backend,
+        root=root,
+        refresh=refresh,
+        eval_source_hash=eval_hash,
+    )
 
 
 def run_bench(
@@ -136,6 +181,7 @@ def run_bench(
     trace: bool = False,
     note: str | None = None,
     parent_id: str | None = None,
+    require_check: bool = False,
     root: str | Path | None = None,
 ) -> dict:
     """Measure mean GPU kernel time and compare against stored baseline."""
@@ -156,6 +202,7 @@ def run_bench(
         trace=trace,
         note=note,
         parent_id=parent_id,
+        require_check=require_check,
         root=root,
     )
 
@@ -166,13 +213,23 @@ def run_history(
     """List recorded bench runs, optionally filtered by kernel/eval path and tailed by limit."""
     if limit is not None and limit <= 0:
         raise ValueError("--limit must be a positive integer")
-    records = History(root=root).list(target=target)
+    history = History(root=root)
+    all_records = history.list()
+    avg_by_id = {
+        rec["id"]: _extract_metrics(rec.get("bench") or {}).get("avg_ms")
+        for rec in all_records
+        if "id" in rec
+    }
+    records = history.list(target=target)
     total = len(records)
     if limit is not None:
         records = records[-limit:]
     return {
         "total": total,
-        "records": [summarize_record(record) for record in records],
+        "records": [
+            summarize_record(record, parent_avg_ms=avg_by_id.get(record.get("parent_id")))
+            for record in records
+        ],
     }
 
 

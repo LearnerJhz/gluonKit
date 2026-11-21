@@ -10,10 +10,11 @@ from typing import Any, Callable, TextIO
 
 from gluonkit.interfaces.types import Output
 
-_MS_KEYS = frozenset({"avg", "median", "min", "std", "avg_ms", "baseline_ms", "baseline_time_ms"})
-_PCT_KEYS = frozenset({"roofline", "roofline_pct", "occupancy_pct"})
+_MS_KEYS = frozenset({"avg", "median", "min", "p95", "std", "avg_ms", "p95_ms", "baseline_ms", "baseline_time_ms"})
+_PCT_KEYS = frozenset({"roofline", "roofline_pct", "occupancy_pct", "delta_vs_parent_pct"})
 _RATIO_KEYS = frozenset({"speedup", "speedup_vs_baseline"})
 _RATE_KEYS = frozenset({"tflops", "gbps"})
+_ERR_KEYS = frozenset({"atol", "rtol", "max_abs_err", "max_rel_err"})
 
 
 def _is_rate_key(key: str | None) -> bool:
@@ -26,6 +27,12 @@ def _round_float(value: float, key: str | None = None) -> float:
     """Round finite floats for CLI JSON readability without altering non-finite errors."""
     if not isfinite(value):
         return value
+    if value == 0:
+        return 0.0
+    if key in _ERR_KEYS:
+        if abs(value) < 1e-3:
+            return float(f"{value:.4g}")
+        return round(value, 6)
     if key in _MS_KEYS or (key is not None and key.endswith("_ms")):
         ndigits = 6
     elif key in _PCT_KEYS or (key is not None and key.endswith("_pct")):

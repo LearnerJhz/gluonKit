@@ -101,6 +101,25 @@ def _first_paragraph(obj) -> str:
     return re.sub(r"\s+", " ", para).strip()
 
 
+def _full_docstring(obj) -> str:
+    target = getattr(obj, "fn", obj)
+    doc = inspect.getdoc(target) or inspect.getdoc(obj) or ""
+    return doc.strip()
+
+
+def _source_location(obj) -> str | None:
+    target = getattr(obj, "fn", obj)
+    for candidate in (target, obj):
+        try:
+            src_file = inspect.getsourcefile(candidate)
+            _, lineno = inspect.getsourcelines(candidate)
+            if src_file:
+                return f"{src_file}:{lineno}"
+        except (OSError, TypeError):
+            continue
+    return None
+
+
 def list_module(mod) -> str:
     """Summarise the public submodules, types and callables of `mod` as text."""
     layouts_types, callables, direct_mods = [], [], []
@@ -132,11 +151,18 @@ def list_module(mod) -> str:
     return "\n".join(lines)
 
 
-def show_symbols(mod, symbols: list[str], *, fallback: bool = True) -> tuple[str, list[str]]:
+def show_symbols(
+    mod,
+    symbols: list[str],
+    *,
+    fallback: bool = True,
+    full: bool = False,
+) -> tuple[str, list[str]]:
     """Describe each symbol as text. Returns (stdout text, error lines for unresolved symbols).
 
     fallback=False restricts lookup to `mod` (explicit -m); otherwise symbols found only in the
-    gluon root package are annotated with where they resolved.
+    gluon root package are annotated with where they resolved. `full=True` prints the full
+    docstring and source file location.
     """
     blocks: list[str] = []
     errors: list[str] = []
@@ -153,9 +179,18 @@ def show_symbols(mod, symbols: list[str], *, fallback: bool = True) -> tuple[str
 
         kind = "class" if inspect.isclass(obj) else "def"
         lines = [f"{kind} {sym}{_clean_signature(obj)}"]
-        doc = _first_paragraph(obj)
-        if doc:
-            lines.append(f"  {doc}")
+        if full:
+            doc = _full_docstring(obj)
+            if doc:
+                for doc_line in doc.splitlines():
+                    lines.append(f"  {doc_line}" if doc_line.strip() else "")
+            loc = _source_location(obj)
+            if loc:
+                lines.append(f"  source: {loc}")
+        else:
+            doc = _first_paragraph(obj)
+            if doc:
+                lines.append(f"  {doc}")
         if found_in is not mod and found_in.__name__ == ROOT_PKG:
             lines.append(f"  (resolved in {ROOT_PKG})")
         if inspect.isclass(obj):

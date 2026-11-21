@@ -3,14 +3,14 @@
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-import platform
 import shutil
 import tempfile
 from typing import Any, Iterator
 
 from gluonkit.core.baseline import BaselineStore, baseline_env, is_valid_ms
-from gluonkit.core.history import History
-from gluonkit.core.peaks import PeakStore, resolve_peaks
+from gluonkit.core.checker import CheckStore
+from gluonkit.core.history import History, source_hash
+from gluonkit.core.peaks import PeakStore, device_key, resolve_peaks
 from gluonkit.core.roofline import calculate_roofline, validate_metadata
 from gluonkit.interfaces.backend import Backend
 from gluonkit.interfaces.types import BenchResult
@@ -73,6 +73,7 @@ def bench_task(
     baseline: dict[str, Any] | None = None,
     trace_path: str | None = None,
     calibrated_peaks: dict[str, float] | None = None,
+    verified: bool | None = None,
 ) -> BenchResult:
     """Measure `task['run']` and optionally compare against a pre-stored `baseline` dict.
 
@@ -90,17 +91,20 @@ def bench_task(
     )
     speedup = float(baseline["avg_ms"]) / measured.avg_ms if baseline is not None and measured.avg_ms > 0 else None
     rates = calculate_roofline(measured.avg_ms, **metadata)
+    metrics: dict[str, Any] = {
+        "speedup": speedup,
+        "tflops": rates["tflops"],
+        "gbps": rates["gbps"],
+        "roofline": rates["roofline_pct"],
+        "bound_by": rates["bound_by"],
+        "roofline_model": rates["roofline_model"],
+    }
     return BenchResult(
         kernel_profile=measured,
-        metrics={
-            "speedup": speedup,
-            "tflops": rates["tflops"],
-            "gbps": rates["gbps"],
-            "roofline": rates["roofline_pct"],
-            "bound_by": rates["bound_by"],
-        },
+        metrics=metrics,
         baseline=baseline,
         peaks=None if peaks is None else {**peaks, "source": peaks_source},
+        verified=verified,
     )
 
 
@@ -149,24 +153,38 @@ def record_baseline(
     *,
     root: str | Path | None = None,
     options: BenchOptions | None = None,
+    refresh: bool = False,
+    eval_source_hash: str | None = None,
 ) -> dict[str, Any]:
-    """Return existing baseline file if present, otherwise measure `task['ref']` once and save."""
+    """Return existing baseline file if valid and not refreshing, otherwise measure `task['ref']` and save."""
     store = BaselineStore(root)
-    existing = store.load_record(eval_path)
-    if existing is not None:
-        return existing
+    info = backend.probe()
+    dev_key = device_key(info)
+    computed_hash = eval_source_hash or (
+        source_hash(eval_path.read_bytes()) if eval_path.is_file() else None
+    )
+    if not refresh:
+        existing = store.load_record(
+            eval_path,
+            eval_source_hash=computed_hash,
+            device_key=dev_key,
+        )
+        if existing is not None:
+            return existing
 
     opts = options or BenchOptions()
-    info = backend.probe()
     measured_baseline = measure_baseline(task, backend, options=opts)
     saved_path, entry = store.save(
         eval_path,
         env=baseline_env(info),
         measurement_options=opts.to_baseline_dict(),
         baseline=measured_baseline,
+        eval_source_hash=computed_hash,
+        device_key=dev_key,
     )
     return {
         "file": store.display_path(saved_path),
+        "status": "measured",
         **entry,
     }
 
@@ -182,6 +200,7 @@ def run_benchmark(
     trace: bool = False,
     note: str | None = None,
     parent_id: str | None = None,
+    require_check: bool = False,
     root: str | Path | None = None,
     options: BenchOptions | None = None,
 ) -> dict[str, Any]:
@@ -190,11 +209,32 @@ def run_benchmark(
     history = History(root=root)
     parent = history.get(parent_id)["id"] if parent_id is not None else None
     info = backend.probe()
+    dev_key = device_key(info)
     peak_entry = PeakStore(history.root).get(info)
     calibrated_peaks = (peak_entry or {}).get("peaks")
 
     eval_rel = history.normalize_path(eval_path)
-    stored_baseline = BaselineStore(history.root).lookup(eval_path)
+    kernel_rel = history.normalize_path(kernel_path)
+    eval_hash = source_hash(eval_source)
+    kernel_hash = source_hash(kernel_source)
+
+    verified = CheckStore(history.root).is_verified(
+        eval_path,
+        eval_source_hash=eval_hash,
+        kernel_source_hash=kernel_hash,
+        device_key=dev_key,
+    )
+    if require_check and not verified:
+        raise RuntimeError(
+            f"Kernel {kernel_rel} (sha256={kernel_hash[:12]}) has not passed `gk check` "
+            f"for {eval_rel}; run `gk check {eval_rel}` before `gk bench --require-check`."
+        )
+
+    stored_baseline = BaselineStore(history.root).lookup(
+        eval_path,
+        eval_source_hash=eval_hash,
+        device_key=dev_key,
+    )
 
     with _trace_session(trace, history.directory) as trace_path:
         result = bench_task(
@@ -204,6 +244,7 @@ def run_benchmark(
             baseline=stored_baseline,
             trace_path=trace_path,
             calibrated_peaks=calibrated_peaks,
+            verified=verified,
         )
         bench = result.to_dict()
         summary = collect_kernel_summary(task, backend, bench["kernel"]["name"])
@@ -212,12 +253,13 @@ def run_benchmark(
             "Kernel or evaluation source changed during bench; not recorded, rerun",
         )
         record = history.save({
-            "kernel_path": history.normalize_path(kernel_path),
+            "kernel_path": kernel_rel,
             "kernel_source_hash": history.store_source(kernel_source),
             "eval_path": eval_rel,
             "eval_source_hash": history.store_source(eval_source),
             "parent_id": parent,
             "note": note,
+            "verified": verified,
             "device_info": info.to_dict(),
             "bench": bench,
             "summary": summary,

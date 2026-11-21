@@ -19,6 +19,7 @@ def _extract_metrics(bench: dict) -> dict:
             "avg_ms": bench.get("avg_ms", bench.get("device_time_ms")),
             "median_ms": bench.get("median_ms"),
             "min_ms": bench.get("min_ms"),
+            "p95_ms": bench.get("p95_ms"),
             "std_ms": bench.get("std_ms"),
             "baseline_ms": bench.get("baseline_time_ms", bench.get("baseline_ms")),
             "speedup": bench.get("speedup_vs_baseline", bench.get("speedup")),
@@ -28,10 +29,11 @@ def _extract_metrics(bench: dict) -> dict:
         }
     kernel = bench.get("kernel") or {}
     metrics = bench["metrics"]
-    return {
+    extracted = {
         "avg_ms": kernel.get("avg"),
         "median_ms": kernel.get("median"),
         "min_ms": kernel.get("min"),
+        "p95_ms": kernel.get("p95"),
         "std_ms": kernel.get("std"),
         "baseline_ms": (bench.get("baseline") or {}).get("avg_ms"),
         "speedup": metrics.get("speedup"),
@@ -39,21 +41,42 @@ def _extract_metrics(bench: dict) -> dict:
         "gbps": metrics.get("gbps"),
         "roofline": metrics.get("roofline"),
     }
+    if kernel.get("iters") is not None:
+        extracted["iters"] = kernel.get("iters")
+    if metrics.get("roofline_model") is not None:
+        extracted["roofline_model"] = metrics.get("roofline_model")
+    return extracted
 
 
-def summarize_record(record: dict) -> dict:
+def summarize_record(record: dict, *, parent_avg_ms: float | None = None) -> dict:
     """Return a compact, agent-friendly summary of a history record."""
     bench = record.get("bench") or {}
-    return {
+    metrics = _extract_metrics(bench)
+    avg_ms = metrics.get("avg_ms")
+    delta_pct = None
+    if (
+        isinstance(avg_ms, (int, float))
+        and isinstance(parent_avg_ms, (int, float))
+        and parent_avg_ms > 0
+    ):
+        delta_pct = (avg_ms - parent_avg_ms) / parent_avg_ms * 100.0
+
+    summary_out = {
         "id": record["id"],
         "parent_id": record.get("parent_id"),
         "kernel_path": record.get("kernel_path"),
         "eval_path": record.get("eval_path"),
         "trace_path": bench.get("trace_path"),
         "note": record.get("note"),
-        **_extract_metrics(bench),
-        "summary": record.get("summary"),
+        **metrics,
     }
+    if delta_pct is not None:
+        summary_out["delta_vs_parent_pct"] = delta_pct
+    verified = record.get("verified", bench.get("verified"))
+    if verified is not None:
+        summary_out["verified"] = verified
+    summary_out["summary"] = record.get("summary")
+    return summary_out
 
 
 class History:

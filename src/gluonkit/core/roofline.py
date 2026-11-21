@@ -16,13 +16,33 @@ def validate_metadata(*, flops=None, bytes_moved=None, peaks: dict | None = None
             raise ValueError(f"{name} must be a positive finite number")
 
 
+def roofline_model_name(*, flops=None, bytes_moved=None) -> str | None:
+    """Classify the roofline model scope from declared workload quantities."""
+    has_flops = flops is not None
+    has_bytes = bytes_moved is not None
+    if has_flops and has_bytes:
+        return "dual_roofline"
+    if has_bytes:
+        return "memory_only"
+    if has_flops:
+        return "compute_only"
+    return None
+
+
 def calculate_roofline(avg_ms: float | None, *, flops=None,
                        bytes_moved=None, peaks: dict | None = None) -> dict:
     validate_metadata(flops=flops, bytes_moved=bytes_moved, peaks=peaks)
     peaks = peaks or {}
     peak_compute, peak_memory = peaks.get("tflops"), peaks.get("gbps")
+    model = roofline_model_name(flops=flops, bytes_moved=bytes_moved)
 
-    result = dict(tflops=None, gbps=None, roofline_pct=None, bound_by=None)
+    result = dict(
+        tflops=None,
+        gbps=None,
+        roofline_pct=None,
+        bound_by=None,
+        roofline_model=model,
+    )
     if avg_ms is None or not isfinite(avg_ms) or avg_ms <= 0:
         return result
     seconds = avg_ms * 1e-3
