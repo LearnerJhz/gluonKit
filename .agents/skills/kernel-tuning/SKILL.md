@@ -10,8 +10,8 @@ description: Systematic GPU kernel performance tuning loop using gk probe, check
 ## 标准调优流程
 
 1. **摸底（会话开始跑一次）**
-   - `.venv/bin/gk probe`：记录 `arch`、`sm_count`、共享内存上限（如 NVIDIA 后端返回的 `smem_per_block_optin`）以及已标定峰值。
-   - 若 `peaks.values` 为 `null`（尚未生成 `.gluonkit/peaks.json`）且评测未显式给出 `peaks`，开始建基线前先跑一次 `.venv/bin/python scripts/calibrate_peaks.py` 完成标定，否则后续 `gk bench` 的 `roofline` 与 `bound_by` 为 `null`；标定后调优期间不要重跑。
+   - `.venv/bin/gk probe`：记录 `arch`、`sm_count`、`warp_size` 与共享内存上限（如 NVIDIA 后端返回的 `smem_per_block_optin`）。
+   - Roofline 峰值默认从预先标定好的 `.gluonkit/peaks.json` 读取（未生成该文件且评测未显式声明 `peaks` 时，`gk bench` 的 `roofline` 与 `bound_by` 为 `null`）；调优期间不要运行或重跑 `scripts/calibrate_peaks.py`。
 2. **建基线**
    - `.venv/bin/gk check <eval.py>` -> `.venv/bin/gk baseline <eval.py>`（单独测一次 `ref()` 并存入 `.gluonkit/baseline/baseline_<name>.json`）-> `.venv/bin/gk bench <eval.py> --note "baseline"` -> `.venv/bin/gk dump-info <eval.py>`
    - 记录基线 `history_id`、`kernel.name`、`kernel.avg`、`kernel.std`、`kernel.min`、`kernel.median`、`baseline.avg_ms`、`metrics.speedup` 以及 `summary`（`n_regs`、`n_spills`、`shared_bytes`、`allocated_shared_bytes`、`num_warps`、`blocks_per_sm`、`occupancy_pct`；注意不要只看 `n_max_threads` 误判并发）。

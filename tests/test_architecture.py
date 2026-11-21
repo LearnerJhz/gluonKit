@@ -11,7 +11,7 @@ from gluonkit.backends.nvidia.profiler import compute_p95
 from gluonkit.backends.registry import BACKENDS, get_backend
 from gluonkit.core.gluon_api import resolve_module, show_symbols
 from gluonkit.core.roofline import calculate_roofline
-from gluonkit.executor import run_baseline, run_check
+from gluonkit.executor import run_baseline, run_check, run_probe
 from gluonkit.interfaces.types import ProbeResult, ProfileData
 
 
@@ -60,6 +60,10 @@ def test_static_backend_registry():
 
     with pytest.raises(ValueError, match="Unknown backend"):
         get_backend("unknown")
+
+    probe_info = run_probe(DummyBackend())
+    assert probe_info == DummyBackend().probe().to_dict()
+    assert "peaks" not in probe_info
 
 
 def test_wave32_vs_wave64_layout():

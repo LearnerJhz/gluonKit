@@ -63,7 +63,7 @@ pip install -e .
 
 # 常用 CLI
 .venv/bin/gk probe
-.venv/bin/python scripts/calibrate_peaks.py          # 一次性标定本机峰值
+.venv/bin/python scripts/calibrate_peaks.py          # 环境初始化时一次性标定本机峰值
 .venv/bin/gk check examples/gemm/eval_gemm.py
 .venv/bin/gk baseline examples/gemm/eval_gemm.py     # 建立（或 --refresh 刷新）参考基线
 .venv/bin/gk bench examples/gemm/eval_gemm.py --note "baseline"

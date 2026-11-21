@@ -87,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="gk", description="Gluon kernel tools")
     commands = parser.add_subparsers(dest="command", required=True)
 
-    commands.add_parser("probe", help="Show GPU information and calibrated peaks for the device")
+    commands.add_parser("probe", help="Show GPU hardware and software environment information")
 
     layout_parser = commands.add_parser("layout", help="Show a Gluon layout mapping (no GPU required)")
     layout_parser.add_argument("expression", help="BlockedLayout(...) or SliceLayout(...)")

@@ -32,7 +32,7 @@ Gluon 是 Triton 的底层 GPU 编程接口。每个 program 处理一个 tile�
 
 | 命令 | 用途 | 关键返回（`info`） |
 |---|---|---|
-| `gk probe` | 查询本机 GPU 架构、SM/CU 数、`warp_size`、共享内存上限、版本及已标定的峰值 | `device_name`, `platform`, `arch`, `warp_size`, `sm_count`, `smem_per_block_optin`, `peaks` |
+| `gk probe` | 查询本机 GPU 架构、SM/CU 数、`warp_size`、共享内存上限、显存及软件版本 | `device_name`, `platform`, `arch`, `compiler_version`, `torch_version`, `warp_size`, `sm_count`, `smem_per_block_optin`, `vram_bytes` |
 | `gk layout "<expr>" --shape 64,64 [--hardware]` | 离线查看线程/warp 与张量映射（按当前后端 `warp_size` 校验 `threads_per_warp` 乘积） | 格式化映射文本 |
 | `gk bank-conflicts --register-layout "<expr>" --shared-layout "<expr>" --shape 64,32 --dtype float16` | 离线调用 `gl.bank_conflicts()`（无需 GPU；共享布局支持 `SwizzledSharedLayout`） | `bank_conflicts_count`（每个 wavefront 的额外访问次数，0 表示无冲突） |
 | `gk check <eval.py>` | 触发 JIT 编译并校验与 `ref()` 数值一致（默认 `atol=rtol=1e-2`） | `passed`, `atol`, `rtol`, `max_abs_err`, `max_rel_err` |

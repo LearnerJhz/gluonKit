@@ -8,11 +8,8 @@ from gluonkit.core.baseline import BaselineStore
 from gluonkit.core.bencher import record_baseline, run_benchmark
 from gluonkit.core.checker import check_task
 from gluonkit.core.history import History, _extract_metrics, source_hash, summarize_record
-from gluonkit.core.peaks import PeakStore, device_key
 from gluonkit.core.storage import gluonkit_dir
 from gluonkit.interfaces.backend import Backend
-
-_BRIEF_DETAIL_KEYS = ("unit", "method", "problem", "theoretical_gbps", "efficiency_pct", "calibrated_at")
 
 
 def _read_eval_file(eval_path: str) -> tuple[Path, bytes]:
@@ -63,29 +60,9 @@ def _module_loaded_from(path: Path) -> bool:
     return False
 
 
-def _brief_detail(detail: dict) -> dict:
-    return {key: detail[key] for key in _BRIEF_DETAIL_KEYS if key in detail}
-
-
-def run_probe(backend: Backend, *, root: str | Path | None = None) -> dict:
-    """Probe device information and attach calibrated peaks."""
-    info = backend.probe()
-    store = PeakStore(root)
-    entry = store.get(info)
-    peaks: dict = {"file": store.display_path(), "device_key": device_key(info)}
-    if entry is None:
-        peaks.update(
-            values=None,
-            hint="not calibrated; run `.venv/bin/python scripts/calibrate_peaks.py` to measure peaks for this device",
-        )
-    else:
-        details = entry.get("details") or {}
-        peaks.update(
-            updated_at=entry.get("updated_at"),
-            values=entry.get("peaks"),
-            items={item: _brief_detail(details.get(item) or {}) for item in entry.get("peaks") or {}},
-        )
-    return {**info.to_dict(), "peaks": peaks}
+def run_probe(backend: Backend) -> dict:
+    """Probe device hardware and software environment information."""
+    return backend.probe().to_dict()
 
 
 def run_layout(expression: str, shape: list[int], backend: Backend, *, hardware: bool = False) -> str:

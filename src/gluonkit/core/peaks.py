@@ -1,4 +1,4 @@
-"""Per-device calibrated peaks: `.gluonkit/peaks.json`, written by `scripts/calibrate_peaks.py`, read by bench/probe.
+"""Per-device calibrated peaks: `.gluonkit/peaks.json`, written by `scripts/calibrate_peaks.py`, read by bench.
 
 File layout (version 1)::
 
