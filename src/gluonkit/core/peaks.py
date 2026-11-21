@@ -1,23 +1,21 @@
-"""Per-device calibrated peaks: `.gluonkit/peaks.json`, written by `scripts/calibrate_peaks.py`, read by bench.
+"""Single-device peak configuration: `.gluonkit/peaks.json`, written by `scripts/calibrate_peaks.py` (or hand-authored) and read by `gk bench`.
 
-File layout (version 1)::
+File layout::
 
     {
-      "version": 1,
-      "devices": {
-        "<platform>:<arch>:<device_name>": {
-          "device_name": "...", "platform": "...", "arch": "...",
-          "updated_at": "<iso8601>",
-          "peaks":   {"gbps": 160.1, "tflops_fp16": 25.3, ...},   # item -> value
-          "details": {"gbps": {"unit": "GB/s", "method": "...", "calibrated_at": "...", ...}}
-        }
-      }
+      "device_key": "<platform>:<arch>:<device_name>",
+      "calibrated_at": "<iso8601>",
+      "env": {"torch": "...", "triton": "..."},
+      "peaks": {"gbps": 157.14, "tflops_fp16": 25.3, ...},
+      "sources": {"gbps": "torch.neg fp32 (512 MiB)", ...}
     }
 
-`peaks` uses the same units as bench metrics (GB/s, TFLOP/s). Items are merged on
-re-calibration, so `calibrate_peaks.py --items gbps` only refreshes the bandwidth entry.
+When hand-authoring `.gluonkit/peaks.json`, only `"peaks"` is required. Items are merged
+on re-calibration for the same device, so `calibrate_peaks.py --items gbps` only
+refreshes the bandwidth entry.
 """
 
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +29,6 @@ from gluonkit.core.storage import (
 )
 from gluonkit.interfaces.types import ProbeResult
 
-PEAKS_VERSION = 1
 PEAKS_FILENAME = "peaks.json"
 # Calibrated item name = "tflops_" + the task's `compute_mode` (e.g. "fp16" -> "tflops_fp16").
 COMPUTE_PEAK_PREFIX = "tflops_"
@@ -40,8 +37,12 @@ _CORRUPT_HINT = "delete it and rerun scripts/calibrate_peaks.py"
 
 
 def device_key(info: ProbeResult) -> str:
-    """Stable, human-readable key: identical GPU models on one host share calibration."""
+    """Stable, human-readable key identifying the GPU platform, arch, and model."""
     return f"{info.platform}:{info.arch}:{info.device_name}"
+
+
+def _is_positive_number(value: Any) -> bool:
+    return not isinstance(value, bool) and isinstance(value, (int, float)) and isfinite(value) and value > 0
 
 
 class PeakStore:
@@ -52,48 +53,61 @@ class PeakStore:
     def display_path(self) -> str:
         return normalize_path(self.path, self.root)
 
-    def load(self) -> dict:
+    def load(self) -> dict[str, Any] | None:
+        """Load and validate `.gluonkit/peaks.json`, returning None if absent."""
         if not self.path.is_file():
-            return {"version": PEAKS_VERSION, "devices": {}}
+            return None
         data = read_json(self.path, recovery_hint=_CORRUPT_HINT)
-        if not isinstance(data.get("devices"), dict):
-            raise ValueError(f"{self.path} has an unknown layout; {_CORRUPT_HINT}")
-        if data.get("version") != PEAKS_VERSION:
+        peaks = data.get("peaks")
+        if not isinstance(peaks, dict):
+            raise ValueError(f"{self.path} must contain a 'peaks' object; {_CORRUPT_HINT}")
+        for item, value in peaks.items():
+            if not _is_positive_number(value):
+                raise ValueError(f"{self.path} peak {item!r} must be a positive finite number; {_CORRUPT_HINT}")
+        sources = data.get("sources")
+        if sources is not None and not isinstance(sources, dict):
+            raise ValueError(f"{self.path} 'sources' must be an object; {_CORRUPT_HINT}")
+        return data
+
+    def get(self, info: ProbeResult) -> dict[str, Any] | None:
+        """Return the peak record for the active device, validating `device_key` if present."""
+        data = self.load()
+        if data is None:
+            return None
+        stored_device = data.get("device_key")
+        current_device = device_key(info)
+        if stored_device and stored_device != current_device:
             raise ValueError(
-                f"{self.path} version {data.get('version')!r} is unsupported "
-                f"(expected {PEAKS_VERSION}); {_CORRUPT_HINT}"
+                f"{self.display_path()} belongs to {stored_device!r}, "
+                f"current device is {current_device!r}; update it or rerun scripts/calibrate_peaks.py"
             )
         return data
 
-    def get(self, info: ProbeResult) -> dict | None:
-        return self.load()["devices"].get(device_key(info))
-
     def update(self, info: ProbeResult, results: dict[str, dict[str, Any]],
-               env: dict[str, Any] | None = None) -> dict:
-        """Merge freshly calibrated items into this device's entry and persist atomically."""
-        data = self.load()
+               env: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Merge freshly calibrated items for this device and persist atomically."""
+        existing = self.load()
         key = device_key(info)
-        now = now_iso()
-        entry = data["devices"].get(key) or {}
-        peaks = dict(entry.get("peaks") or {})
-        details = dict(entry.get("details") or {})
+        same_device = existing is not None and existing.get("device_key") in (None, key)
+        peaks = dict(existing.get("peaks") or {}) if same_device else {}
+        sources = dict(existing.get("sources") or {}) if same_device else {}
         for item, result in results.items():
             value = result.get("value")
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or not value > 0:
+            if not _is_positive_number(value):
                 raise ValueError(f"calibration item {item!r} produced an invalid value: {value!r}")
             peaks[item] = float(value)
-            details[item] = {**{k: v for k, v in result.items() if k != "value"},
-                             "calibrated_at": now, "env": env or {}}
-        entry = {
-            "device_name": info.device_name,
-            "platform": info.platform,
-            "arch": info.arch,
-            "updated_at": now,
+            source = result.get("source") or result.get("method")
+            if source:
+                sources[item] = str(source)
+        entry: dict[str, Any] = {
+            "device_key": key,
+            "calibrated_at": now_iso(),
+            "env": dict(env or {}),
             "peaks": dict(sorted(peaks.items())),
-            "details": dict(sorted(details.items())),
         }
-        data["devices"][key] = entry
-        atomic_write_json(self.path, data)
+        if sources:
+            entry["sources"] = dict(sorted(sources.items()))
+        atomic_write_json(self.path, entry)
         return entry
 
 

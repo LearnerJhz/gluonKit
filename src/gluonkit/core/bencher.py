@@ -197,7 +197,7 @@ def run_benchmark(
     parent = history.get(parent_id)["id"] if parent_id is not None else None
     info = backend.probe()
     peak_entry = PeakStore(history.root).get(info)
-    calibrated_peaks = (peak_entry or {}).get("peaks")
+    calibrated_peaks = peak_entry["peaks"] if peak_entry is not None else None
 
     eval_rel = history.normalize_path(eval_path)
     eval_hash = source_hash(eval_source)

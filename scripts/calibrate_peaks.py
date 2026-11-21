@@ -13,7 +13,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import json
 import os
-import platform
 from typing import Any, Callable
 
 os.environ.setdefault("KINETO_LOG_LEVEL", "6")
@@ -81,6 +80,7 @@ def _calibrate_gbps(backend: Backend, props) -> dict[str, Any]:
     value = moved / (timing["avg_ms"] * 1e-3) / 1e9
     result = {
         "value": value,
+        "source": f"torch.neg fp32 ({nbytes // MiB} MiB)",
         "unit": "GB/s",
         "method": "torch.neg(fp32, out=dst) streaming read+write, bytes = 2 x buffer",
         "working_set_bytes": moved,
@@ -116,7 +116,7 @@ def _matmul_precision(*, tf32: bool):
         ) = saved
 
 
-def _matmul_item(dtype_name: str, n: int, *, tf32: bool, method: str):
+def _matmul_item(dtype_name: str, n: int, *, tf32: bool, precision_label: str, method: str):
     def run(backend: Backend, props) -> dict[str, Any]:
         import torch
 
@@ -135,6 +135,7 @@ def _matmul_item(dtype_name: str, n: int, *, tf32: bool, method: str):
         flops = 2 * size ** 3
         return {
             "value": flops / (timing["avg_ms"] * 1e-3) / 1e12,
+            "source": f"torch.matmul {precision_label} ({size}x{size}x{size})",
             "unit": "TFLOP/s",
             "method": method,
             "problem": f"{size}x{size}x{size} {dtype_name}",
@@ -147,13 +148,17 @@ def _matmul_item(dtype_name: str, n: int, *, tf32: bool, method: str):
 ITEMS: dict[str, _Item] = {
     "gbps": _Item("DRAM streaming bandwidth (GB/s)", 0, _calibrate_gbps),
     "tflops_fp16": _Item("FP16 tensor-core matmul, fp32 accumulate (TFLOP/s)", 70, _matmul_item(
-        "float16", 8192, tf32=False, method="torch.matmul fp16 (fp32 accumulate)")),
+        "float16", 8192, tf32=False, precision_label="fp16",
+        method="torch.matmul fp16 (fp32 accumulate)")),
     "tflops_bf16": _Item("BF16 tensor-core matmul, fp32 accumulate (TFLOP/s)", 80, _matmul_item(
-        "bfloat16", 8192, tf32=False, method="torch.matmul bf16 (fp32 accumulate)")),
+        "bfloat16", 8192, tf32=False, precision_label="bf16",
+        method="torch.matmul bf16 (fp32 accumulate)")),
     "tflops_tf32": _Item("TF32 tensor-core matmul (TFLOP/s)", 80, _matmul_item(
-        "float32", 8192, tf32=True, method="torch.matmul fp32 with allow_tf32=True")),
+        "float32", 8192, tf32=True, precision_label="fp32 allow_tf32=True",
+        method="torch.matmul fp32 with allow_tf32=True")),
     "tflops_fp32": _Item("FP32 SIMT FMA matmul, no TF32 (TFLOP/s)", 0, _matmul_item(
-        "float32", 4096, tf32=False, method="torch.matmul fp32 with allow_tf32=False")),
+        "float32", 4096, tf32=False, precision_label="fp32 allow_tf32=False",
+        method="torch.matmul fp32 with allow_tf32=False")),
 }
 
 
@@ -199,8 +204,7 @@ def main(argv: list[str] | None = None) -> int:
         store = PeakStore()
         store.load()
         results = calibrate(items, backend=backend)
-        env = {"python": platform.python_version(), "torch": info.torch_version,
-               "compiler": info.compiler_version, "device": backend.device}
+        env = {"torch": info.torch_version, "triton": info.compiler_version}
         entry = store.update(info, results, env=env)
     except Exception as exc:  # noqa: BLE001 -- single-line JSON contract, like gk
         print(json.dumps({"result": "failed", "info": f"{type(exc).__name__}: {exc}"}))
@@ -208,7 +212,8 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps({"result": "success", "info": {
         "file": store.display_path(), "device_key": device_key(info), "calibrated": list(results),
         "peaks": entry["peaks"],
-        "details": {k: {d: v for d, v in r.items() if d != "value"} for k, r in results.items()},
+        "sources": entry.get("sources"),
+        "details": {k: {d: v for d, v in r.items() if d not in ("value", "source")} for k, r in results.items()},
     }}, ensure_ascii=False))
     return 0
 

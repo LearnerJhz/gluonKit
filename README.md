@@ -77,7 +77,7 @@ pip install -e .
 运行时在工作目录下生成 `.gluonkit/`（已加入 `.gitignore`）：
 - `.gluonkit/triton_cache/`：Triton 编译缓存
 - `.gluonkit/history.jsonl`：每次 `gk bench` 的实验记录
-- `.gluonkit/peaks.json`：按设备存储的标定峰值
+- `.gluonkit/peaks.json`：本机峰值配置（由 `calibrate_peaks.py` 标定或直接手填）
 - `.gluonkit/baseline/baseline_<name>.json`：`gk baseline <eval.py>` 存储的 `ref()` 基线测量结果
 - `.gluonkit/sources/<sha256>.py`：评测脚本与算子源码内容寻址快照
 - `.gluonkit/dump_info/<eval_stem>/<kernel>/<hash>/`：`kernel.ttgir`、`kernel.llir`、`kernel.ptx`（或 `kernel.maca`）

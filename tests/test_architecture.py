@@ -1,5 +1,6 @@
 """Tests for the GluonKit SIMT backend registry, Wave32/Wave64 layout, baseline guard, and roofline."""
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import pytest
@@ -10,6 +11,7 @@ from gluonkit.backends.nvidia.dump_info import derive_limiting_factor
 from gluonkit.backends.nvidia.profiler import compute_p95
 from gluonkit.backends.registry import BACKENDS, get_backend
 from gluonkit.core.gluon_api import resolve_module, show_symbols
+from gluonkit.core.peaks import PeakStore, device_key, resolve_peaks
 from gluonkit.core.roofline import calculate_roofline
 from gluonkit.executor import run_baseline, run_check, run_probe
 from gluonkit.interfaces.types import ProbeResult, ProfileData
@@ -154,3 +156,44 @@ def test_roofline_and_api_full():
     assert not errs
     assert "cache_modifier" in full_text
     assert "source:" in full_text
+
+
+def test_peak_store_flat_schema_and_handwritten(tmp_path: Path):
+    nv_info = DummyBackend(platform="nvidia", arch="sm86", device_name="RTX 3050").probe()
+    mx_info = DummyBackend(platform="metax", arch="maca_c500", device_name="MetaX C500").probe()
+    store = PeakStore(tmp_path)
+    assert store.display_path() == ".gluonkit/peaks.json"
+    assert store.get(nv_info) is None
+
+    # Incremental calibration writes flat single-device peaks.json without version/devices nesting
+    store.update(
+        nv_info,
+        {"gbps": {"value": 157.14, "source": "torch.neg fp32 (512 MiB)"}},
+        env={"torch": "2.14.1+cu130", "triton": "3.8.0"},
+    )
+    entry = store.update(
+        nv_info,
+        {"tflops_fp16": {"value": 25.3, "source": "torch.matmul fp16 (8192x8192x8192)"}},
+        env={"torch": "2.14.1+cu130", "triton": "3.8.0"},
+    )
+    raw = json.loads(store.path.read_text(encoding="utf-8"))
+    assert "version" not in raw and "devices" not in raw
+    assert raw["device_key"] == device_key(nv_info)
+    assert raw["peaks"] == {"gbps": 157.14, "tflops_fp16": 25.3}
+    assert raw["sources"] == {
+        "gbps": "torch.neg fp32 (512 MiB)",
+        "tflops_fp16": "torch.matmul fp16 (8192x8192x8192)",
+    }
+    assert entry == raw
+
+    # Different device_key triggers clear mismatch guard on read
+    with pytest.raises(ValueError, match="belongs to"):
+        store.get(mx_info)
+
+    # Hand-authored minimal peaks.json works without device_key/env/sources
+    store.path.write_text(json.dumps({"peaks": {"gbps": 800.0, "tflops_fp16": 120.0}}), encoding="utf-8")
+    loaded = store.get(mx_info)
+    assert loaded is not None
+    resolved, src = resolve_peaks(None, "fp16", loaded["peaks"])
+    assert resolved == {"tflops": 120.0, "gbps": 800.0}
+    assert src == {"tflops": "calibrated:tflops_fp16", "gbps": "calibrated:gbps"}
