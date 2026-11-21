@@ -1,23 +1,14 @@
-from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import Any, Callable, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol
 
-from .types import KernelSummary, ProbeResult, ProfileData
+from .types import ProbeResult, ProfileData
 
 
-@runtime_checkable
 class Backend(Protocol):
-    name: str
     device: str
     warp_size: int
 
     def probe(self) -> ProbeResult: ...
-
-    def extra_layout_constructors(self) -> dict[str, type]: ...
-
-    def summarize_kernel(self, kernel: Any) -> KernelSummary | dict[str, Any]: ...
-
-    def matmul_precision_context(self, compute_mode: str) -> AbstractContextManager[None]: ...
 
     def layout(self, expression: str, shape: list[int], hardware: bool = False) -> str: ...
 

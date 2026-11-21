@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from gluonkit.backends.registry import SUPPORTED_BACKENDS, get_backend
+from gluonkit.backends.registry import get_backend
 from gluonkit.executor import (
     run_bank_conflicts,
     run_baseline,
@@ -73,12 +73,8 @@ def _dispatch(args: argparse.Namespace, backend: Backend) -> Any:
         return run_baseline(args.eval_path, backend, refresh=getattr(args, "refresh", False))
     if args.command == "bench":
         return run_bench(
-            args.eval_path,
-            backend,
-            trace=args.trace,
-            note=args.note,
-            parent_id=args.parent,
-            require_check=getattr(args, "require_check", False),
+            args.eval_path, backend,
+            trace=args.trace, note=args.note, parent_id=args.parent,
         )
     if args.command == "history":
         return run_history(args.target, limit=args.limit)
@@ -89,12 +85,6 @@ def _dispatch(args: argparse.Namespace, backend: Backend) -> Any:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="gk", description="Gluon kernel tools")
-    parser.add_argument(
-        "--backend",
-        choices=SUPPORTED_BACKENDS,
-        default=None,
-        help="Target SIMT GPU backend (default: auto-detect via runtime or GK_BACKEND)",
-    )
     commands = parser.add_subparsers(dest="command", required=True)
 
     commands.add_parser("probe", help="Show GPU information and calibrated peaks for the device")
@@ -110,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     bank_parser.add_argument(
         "--register-layout", required=True,
-        help="BlockedLayout(...), SliceLayout(...), DotOperandLayout(...) or vendor MMA layout",
+        help="BlockedLayout(...), SliceLayout(...), DotOperandLayout(...) or NVMMADistributedLayout(...)",
     )
     bank_parser.add_argument("--shared-layout", required=True, help="SwizzledSharedLayout(...)")
     bank_parser.add_argument("--shape", required=True, help="Tensor dimensions, e.g. 64,32")
@@ -126,14 +116,10 @@ def main(argv: list[str] | None = None) -> int:
 
     baseline_parser = commands.add_parser(
         "baseline",
-        help="Measure and store ref baseline once if missing (or re-measure with --refresh)",
+        help="Measure and store ref baseline once if missing",
     )
     baseline_parser.add_argument("eval_path", help="Python script (eval_<name>.py) defining prepare(device)")
-    baseline_parser.add_argument(
-        "--refresh",
-        action="store_true",
-        help="Force re-measurement and update the stored baseline for this evaluation script",
-    )
+    baseline_parser.add_argument("--refresh", action="store_true", help="Re-measure and overwrite stored baseline")
 
     bench_parser = commands.add_parser(
         "bench",
@@ -143,11 +129,6 @@ def main(argv: list[str] | None = None) -> int:
     bench_parser.add_argument("--note", help="What changed and why (stored in history)")
     bench_parser.add_argument("--parent", help="Parent history record id")
     bench_parser.add_argument("--trace", action="store_true", help="Export the measured run's Chrome trace")
-    bench_parser.add_argument(
-        "--require-check",
-        action="store_true",
-        help="Abort unless the current kernel and evaluation source hashes have passed `gk check`",
-    )
 
     history_parser = commands.add_parser("history", help="List recorded bench experiments")
     history_parser.add_argument("target", nargs="?", help="Optional kernel or eval path filter")
@@ -165,10 +146,11 @@ def main(argv: list[str] | None = None) -> int:
     api_show = api_commands.add_parser("show", help="Show signature and doc of symbols")
     api_show.add_argument("symbols", nargs="+", help="Symbol names, e.g. max sum exp load")
     api_show.add_argument("-m", "--module", default=None, help="Search only this module (default: gl, falling back to gluon)")
-    api_show.add_argument("--full", action="store_true", help="Show full docstring and definition source file/line")
+    api_show.add_argument("--full", action="store_true", help="Show full docstring and source file location")
 
     args = parser.parse_args(argv)
     _configure_env()
     if args.command == "api":
         return _run_api(args)
-    return emit_json(capture_run(lambda: _dispatch(args, get_backend(args.backend))))
+    backend: Backend = get_backend()
+    return emit_json(capture_run(lambda: _dispatch(args, backend)))

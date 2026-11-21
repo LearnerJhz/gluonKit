@@ -1,4 +1,4 @@
-"""Per-eval stored baseline measurements under `.gluonkit/baseline/` with identity verification."""
+"""Per-eval stored baseline measurements under `.gluonkit/baseline/`."""
 
 import hashlib
 import json
@@ -38,10 +38,6 @@ def baseline_filename(eval_path: str | Path) -> str:
     return f"baseline_{name}.json"
 
 
-def _file_sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 class BaselineStore:
     def __init__(self, root: str | Path | None = None):
         self.root = resolve_root(root)
@@ -59,23 +55,7 @@ class BaselineStore:
             return None
         return json.loads(target.read_text(encoding="utf-8"))
 
-    def _infer_legacy_identity(self, eval_rel: str, eval_hash: str) -> bool:
-        """Return True if a legacy v1 baseline (without eval_path) matches a recorded history entry."""
-        history_path = gluonkit_dir(self.root, "history.jsonl")
-        if not history_path.is_file():
-            return False
-        try:
-            for line in history_path.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                record = json.loads(line)
-                if record.get("eval_path") == eval_rel and record.get("eval_source_hash") == eval_hash:
-                    return True
-        except Exception:
-            return False
-        return False
-
-    def _validate_identity(
+    def _validate(
         self,
         entry: dict[str, Any],
         eval_path: str | Path,
@@ -86,38 +66,25 @@ class BaselineStore:
         resolved = Path(eval_path).resolve()
         eval_rel = normalize_path(resolved, self.root)
         current_hash = eval_source_hash or (
-            _file_sha256(resolved) if resolved.is_file() else None
+            hashlib.sha256(resolved.read_bytes()).hexdigest() if resolved.is_file() else None
         )
         display = self.display_path(self.target_path(eval_path))
 
-        stored_path = entry.get("eval_path")
-        stored_hash = entry.get("eval_source_hash")
-        stored_device = entry.get("device_key")
-
-        if stored_path is not None and stored_path != eval_rel:
+        if entry.get("eval_path") and entry["eval_path"] != eval_rel:
             raise ValueError(
-                f"Baseline collision in {display}: stored baseline belongs to {stored_path!r}, "
+                f"Baseline collision in {display}: stored baseline belongs to {entry['eval_path']!r}, "
                 f"not {eval_rel!r} (run `gk baseline {eval_rel} --refresh` to overwrite)"
             )
-        if stored_hash is not None and current_hash is not None and stored_hash != current_hash:
+        if entry.get("eval_source_hash") and current_hash and entry["eval_source_hash"] != current_hash:
             raise ValueError(
-                f"Baseline stale in {display}: evaluation script {eval_rel!r} content changed "
+                f"Baseline stale in {display}: {eval_rel!r} changed "
                 f"(run `gk baseline {eval_rel} --refresh` to re-measure)"
             )
-        if stored_device is not None and device_key is not None and stored_device != device_key:
+        if entry.get("device_key") and device_key and entry["device_key"] != device_key:
             raise ValueError(
-                f"Baseline device mismatch in {display}: stored baseline was measured on "
-                f"{stored_device!r}, current device is {device_key!r} "
-                f"(run `gk baseline {eval_rel} --refresh` to re-measure)"
+                f"Baseline device mismatch in {display}: stored for {entry['device_key']!r}, "
+                f"current device is {device_key!r} (run `gk baseline {eval_rel} --refresh`)"
             )
-        # If legacy file has no stored_path/stored_hash, verify against history if history exists
-        if stored_path is None and current_hash is not None:
-            history_path = gluonkit_dir(self.root, "history.jsonl")
-            if history_path.is_file() and not self._infer_legacy_identity(eval_rel, current_hash):
-                raise ValueError(
-                    f"Legacy baseline {display} is unbound and does not match {eval_rel!r} "
-                    f"(run `gk baseline {eval_rel} --refresh` to bind and re-measure)"
-                )
 
     def load_record(
         self,
@@ -126,21 +93,12 @@ class BaselineStore:
         eval_source_hash: str | None = None,
         device_key: str | None = None,
     ) -> dict[str, Any] | None:
-        """Return `{"file": ..., "status": "reused", **entry}` if valid baseline exists, else None."""
+        """Return `{"file": ..., **entry}` if a matching baseline file exists, otherwise None."""
         entry = self._read(eval_path)
         if entry is None:
             return None
-        self._validate_identity(
-            entry,
-            eval_path,
-            eval_source_hash=eval_source_hash,
-            device_key=device_key,
-        )
-        return {
-            "file": self.display_path(self.target_path(eval_path)),
-            "status": "reused",
-            **entry,
-        }
+        self._validate(entry, eval_path, eval_source_hash=eval_source_hash, device_key=device_key)
+        return {"file": self.display_path(self.target_path(eval_path)), **entry}
 
     def lookup(
         self,
@@ -149,19 +107,12 @@ class BaselineStore:
         eval_source_hash: str | None = None,
         device_key: str | None = None,
     ) -> dict[str, Any]:
-        """Load stored baseline summary (`kernel_name` and `avg_ms`), verifying identity."""
+        """Load stored baseline summary (`kernel_name` and `avg_ms`)."""
         target = self.target_path(eval_path)
         if not target.is_file():
-            raise FileNotFoundError(
-                f"Baseline not found: {self.display_path(target)} (run `gk baseline` first)"
-            )
+            raise FileNotFoundError(f"Baseline not found: {self.display_path(target)} (run `gk baseline` first)")
         entry = json.loads(target.read_text(encoding="utf-8"))
-        self._validate_identity(
-            entry,
-            eval_path,
-            eval_source_hash=eval_source_hash,
-            device_key=device_key,
-        )
+        self._validate(entry, eval_path, eval_source_hash=eval_source_hash, device_key=device_key)
         baseline = entry["baseline"]
         return {
             "kernel_name": baseline["kernel_name"],
@@ -178,13 +129,13 @@ class BaselineStore:
         eval_source_hash: str | None = None,
         device_key: str | None = None,
     ) -> tuple[Path, dict[str, Any]]:
-        """Persist a measured ref baseline entry atomically with eval identity binding."""
+        """Persist a measured ref baseline entry atomically."""
         if not isinstance(baseline, dict) or not is_valid_ms(baseline.get("avg_ms")):
             raise ValueError("baseline must contain a finite positive 'avg_ms'")
         resolved = Path(eval_path).resolve()
         eval_rel = normalize_path(resolved, self.root)
         computed_hash = eval_source_hash or (
-            _file_sha256(resolved) if resolved.is_file() else None
+            hashlib.sha256(resolved.read_bytes()).hexdigest() if resolved.is_file() else None
         )
         stored_baseline = {
             k: v for k, v in baseline.items() if k not in ("source", "measured_at")
@@ -192,17 +143,13 @@ class BaselineStore:
         stored_baseline["avg_ms"] = float(stored_baseline["avg_ms"])
         entry: dict[str, Any] = {
             "eval_path": eval_rel,
-        }
-        if computed_hash is not None:
-            entry["eval_source_hash"] = computed_hash
-        if device_key is not None:
-            entry["device_key"] = device_key
-        entry.update({
+            "eval_source_hash": computed_hash,
+            "device_key": device_key,
             "env": dict(env),
             "measurement_options": dict(measurement_options),
             "measured_at": now_iso(),
             "baseline": stored_baseline,
-        })
+        }
         target = self.target_path(eval_path)
         atomic_write_json(target, entry)
         return target, entry

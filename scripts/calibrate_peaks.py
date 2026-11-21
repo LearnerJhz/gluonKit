@@ -1,31 +1,26 @@
-"""One-off SIMT GPU peak calibration: measure achievable DRAM bandwidth and matmul throughput.
+"""One-off peak calibration: measure achievable DRAM bandwidth and matmul throughput.
 
 Usage (run from the repo root, since results go to ./.gluonkit/peaks.json)::
 
-    .venv/bin/python scripts/calibrate_peaks.py [--backend auto|nvidia|metax] [--items gbps,tflops_fp16,...]
+    .venv/bin/python scripts/calibrate_peaks.py [--items gbps,tflops_fp16,...]
 
-Items: gbps, tflops_fp16, tflops_bf16, tflops_tf32, tflops_fp32 (filtered by the active backend's
-`probe().supported_compute_modes`). Results are merged per device into peaks.json; `gk bench` reads
-them (compute peak chosen by the eval's `compute_mode`, e.g. "fp16" -> tflops_fp16). Prints one
-JSON line like the gk commands.
-
-Every item is timed with the active backend's `profile()` method, so roofline percentages compare
-like with like. Values are achievable peaks of vendor-tuned kernels, not datasheet numbers.
+Every item is timed with the active backend from `gluonkit.backends.registry.get_backend()`,
+so roofline percentages compare like with like.
 """
 
 import argparse
+from contextlib import contextmanager
 from dataclasses import dataclass
 import json
 import os
 import platform
 from typing import Any, Callable
 
-os.environ.setdefault("KINETO_LOG_LEVEL", "6")  # Quiet Kineto before torch initialises.
+os.environ.setdefault("KINETO_LOG_LEVEL", "6")
 
-from gluonkit.backends.registry import SUPPORTED_BACKENDS, get_backend  # noqa: E402
+from gluonkit.backends.registry import get_backend  # noqa: E402
 from gluonkit.core.peaks import PeakStore, device_key  # noqa: E402
 from gluonkit.interfaces.backend import Backend  # noqa: E402
-from gluonkit.interfaces.types import ProbeResult  # noqa: E402
 
 MiB = 1024 * 1024
 
@@ -33,17 +28,17 @@ MiB = 1024 * 1024
 @dataclass(frozen=True)
 class _Item:
     description: str
-    compute_mode: str | None  # None for memory bandwidth ("gbps")
-    run: Callable[[Backend, ProbeResult], dict[str, Any]]
+    min_sm: int
+    run: Callable[[Backend, Any], dict[str, Any]]
 
 
-def _theoretical_gbps() -> float | None:
-    try:
-        import torch
+def _sm(props) -> int:
+    if getattr(props, "gcnArchName", None):
+        return 80
+    return props.major * 10 + props.minor
 
-        props = torch.cuda.get_device_properties(0)
-    except Exception:
-        return None
+
+def _theoretical_gbps(props) -> float | None:
     clock_khz = getattr(props, "memory_clock_rate", 0) or 0
     bus_bits = getattr(props, "memory_bus_width", 0) or 0
     if clock_khz <= 0 or bus_bits <= 0:
@@ -62,19 +57,17 @@ def _measure(fn: Callable[[], object], backend: Backend, iters: int, warmup: int
         "kernel_name": name,
         "avg_ms": data.avg_ms,
         "min_ms": data.min_ms,
-        "p95_ms": data.p95_ms,
         "std_ms": data.std_ms,
         "iters": iters,
         "warmup": warmup,
-        "timing_method": data.timing_method,
     }
 
 
-def _calibrate_gbps(backend: Backend, info: ProbeResult) -> dict[str, Any]:
+def _calibrate_gbps(backend: Backend, props) -> dict[str, Any]:
     import torch
 
     free_bytes, _ = torch.cuda.mem_get_info(backend.device)
-    l2_bytes = info.l2_cache_bytes or 0
+    l2_bytes = getattr(props, "L2_cache_size", 0) or 0
     nbytes = max(256 * MiB, 16 * l2_bytes)
     nbytes = min(nbytes, int(free_bytes * 0.4))
     nbytes -= nbytes % (16 * MiB)
@@ -93,15 +86,38 @@ def _calibrate_gbps(backend: Backend, info: ProbeResult) -> dict[str, Any]:
         "working_set_bytes": moved,
         **timing,
     }
-    theoretical = _theoretical_gbps()
+    theoretical = _theoretical_gbps(props)
     if theoretical:
         result["theoretical_gbps"] = theoretical
         result["efficiency_pct"] = value / theoretical * 100
     return result
 
 
-def _matmul_item(dtype_name: str, n: int, *, compute_mode: str, method: str):
-    def run(backend: Backend, info: ProbeResult) -> dict[str, Any]:
+@contextmanager
+def _matmul_precision(*, tf32: bool):
+    import torch
+
+    matmul = torch.backends.cuda.matmul
+    saved = (
+        matmul.allow_tf32,
+        matmul.allow_fp16_reduced_precision_reduction,
+        matmul.allow_bf16_reduced_precision_reduction,
+    )
+    try:
+        matmul.allow_tf32 = tf32
+        matmul.allow_fp16_reduced_precision_reduction = False
+        matmul.allow_bf16_reduced_precision_reduction = False
+        yield
+    finally:
+        (
+            matmul.allow_tf32,
+            matmul.allow_fp16_reduced_precision_reduction,
+            matmul.allow_bf16_reduced_precision_reduction,
+        ) = saved
+
+
+def _matmul_item(dtype_name: str, n: int, *, tf32: bool, method: str):
+    def run(backend: Backend, props) -> dict[str, Any]:
         import torch
 
         dtype = getattr(torch, dtype_name)
@@ -114,7 +130,7 @@ def _matmul_item(dtype_name: str, n: int, *, compute_mode: str, method: str):
         a = torch.randn((size, size), device=backend.device, dtype=dtype, generator=generator)
         b = torch.randn((size, size), device=backend.device, dtype=dtype, generator=generator)
         c = torch.empty((size, size), device=backend.device, dtype=dtype)
-        with backend.matmul_precision_context(compute_mode):
+        with _matmul_precision(tf32=tf32):
             timing = _measure(lambda: torch.matmul(a, b, out=c), backend, iters=20, warmup=3)
         flops = 2 * size ** 3
         return {
@@ -129,67 +145,43 @@ def _matmul_item(dtype_name: str, n: int, *, compute_mode: str, method: str):
 
 
 ITEMS: dict[str, _Item] = {
-    "gbps": _Item("DRAM streaming bandwidth (GB/s)", None, _calibrate_gbps),
-    "tflops_fp16": _Item(
-        "FP16 matrix-core matmul, fp32 accumulate (TFLOP/s)",
-        "fp16",
-        _matmul_item("float16", 8192, compute_mode="fp16", method="torch.matmul fp16 (fp32 accumulate)"),
-    ),
-    "tflops_bf16": _Item(
-        "BF16 matrix-core matmul, fp32 accumulate (TFLOP/s)",
-        "bf16",
-        _matmul_item("bfloat16", 8192, compute_mode="bf16", method="torch.matmul bf16 (fp32 accumulate)"),
-    ),
-    "tflops_tf32": _Item(
-        "TF32 matrix-core matmul (TFLOP/s)",
-        "tf32",
-        _matmul_item("float32", 8192, compute_mode="tf32", method="torch.matmul fp32 with allow_tf32=True"),
-    ),
-    "tflops_fp32": _Item(
-        "FP32 SIMT FMA matmul, no TF32 (TFLOP/s)",
-        "fp32",
-        _matmul_item("float32", 4096, compute_mode="fp32", method="torch.matmul fp32 with allow_tf32=False"),
-    ),
+    "gbps": _Item("DRAM streaming bandwidth (GB/s)", 0, _calibrate_gbps),
+    "tflops_fp16": _Item("FP16 tensor-core matmul, fp32 accumulate (TFLOP/s)", 70, _matmul_item(
+        "float16", 8192, tf32=False, method="torch.matmul fp16 (fp32 accumulate)")),
+    "tflops_bf16": _Item("BF16 tensor-core matmul, fp32 accumulate (TFLOP/s)", 80, _matmul_item(
+        "bfloat16", 8192, tf32=False, method="torch.matmul bf16 (fp32 accumulate)")),
+    "tflops_tf32": _Item("TF32 tensor-core matmul (TFLOP/s)", 80, _matmul_item(
+        "float32", 8192, tf32=True, method="torch.matmul fp32 with allow_tf32=True")),
+    "tflops_fp32": _Item("FP32 SIMT FMA matmul, no TF32 (TFLOP/s)", 0, _matmul_item(
+        "float32", 4096, tf32=False, method="torch.matmul fp32 with allow_tf32=False")),
 }
 
 
-def supported_items_for_info(info: ProbeResult) -> list[str]:
-    modes = set(info.supported_compute_modes or [])
-    return [
-        name
-        for name, item in ITEMS.items()
-        if item.compute_mode is None or item.compute_mode in modes
-    ]
+def supported_items(device: str) -> list[str]:
+    import torch
+
+    sm = _sm(torch.cuda.get_device_properties(device))
+    return [name for name, item in ITEMS.items() if sm >= item.min_sm]
 
 
-def calibrate(
-    items: list[str] | None = None,
-    *,
-    backend: Backend | None = None,
-    info: ProbeResult | None = None,
-) -> dict[str, dict[str, Any]]:
+def calibrate(items: list[str] | None = None, *, backend: Backend | None = None) -> dict[str, dict[str, Any]]:
     """Run the requested (default: all supported) calibration items via `backend`."""
     import torch
 
-    active_backend = backend or get_backend()
-    probed = info or active_backend.probe()
-    supported = supported_items_for_info(probed)
+    active = backend or get_backend()
+    supported = supported_items(active.device)
     selected = list(dict.fromkeys(items)) if items else supported
     for name in selected:
         if name not in ITEMS:
             raise ValueError(f"unknown calibration item {name!r}; supported here: {supported}")
         if name not in supported:
-            raise ValueError(
-                f"calibration item {name!r} is not supported on {probed.platform}:{probed.arch}; "
-                f"supported here: {supported}"
-            )
+            raise ValueError(f"calibration item {name!r} requires sm{ITEMS[name].min_sm}+; "
+                             f"supported here: {supported}")
+    props = torch.cuda.get_device_properties(active.device)
     results: dict[str, dict[str, Any]] = {}
-    with torch.cuda.device(active_backend.device):
+    with torch.cuda.device(active.device):
         for name in selected:
-            results[name] = {
-                "description": ITEMS[name].description,
-                **ITEMS[name].run(active_backend, probed),
-            }
+            results[name] = {"description": ITEMS[name].description, **ITEMS[name].run(active, props)}
             torch.cuda.empty_cache()
     return results
 
@@ -197,32 +189,24 @@ def calibrate(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Calibrate achievable peaks and save them to .gluonkit/peaks.json")
     parser.add_argument("--items", help="Comma-separated items to (re)calibrate; default: all supported")
-    parser.add_argument("--backend", choices=SUPPORTED_BACKENDS, default=None, help="Target SIMT GPU backend")
     args = parser.parse_args(argv)
     try:
         items = [i.strip() for i in args.items.split(",") if i.strip()] if args.items else None
         if args.items and not items:
             raise ValueError("--items must name at least one calibration item")
-        backend = get_backend(args.backend)
+        backend = get_backend()
         info = backend.probe()
         store = PeakStore()
-        store.load()  # Fail on a corrupt file before spending GPU time.
-        results = calibrate(items, backend=backend, info=info)
-        env = {
-            "python": platform.python_version(),
-            "torch": info.torch_version,
-            "compiler": info.compiler_version,
-            "backend": backend.name,
-            "device": backend.device,
-        }
+        store.load()
+        results = calibrate(items, backend=backend)
+        env = {"python": platform.python_version(), "torch": info.torch_version,
+               "compiler": info.compiler_version, "device": backend.device}
         entry = store.update(info, results, env=env)
     except Exception as exc:  # noqa: BLE001 -- single-line JSON contract, like gk
         print(json.dumps({"result": "failed", "info": f"{type(exc).__name__}: {exc}"}))
         return 1
     print(json.dumps({"result": "success", "info": {
-        "file": store.display_path(),
-        "device_key": device_key(info),
-        "calibrated": list(results),
+        "file": store.display_path(), "device_key": device_key(info), "calibrated": list(results),
         "peaks": entry["peaks"],
         "details": {k: {d: v for d, v in r.items() if d != "value"} for k, r in results.items()},
     }}, ensure_ascii=False))

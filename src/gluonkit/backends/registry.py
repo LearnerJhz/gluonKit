@@ -1,43 +1,19 @@
-"""Backend registration and automatic platform detection (NVIDIA CUDA vs MetaX C500 MACA)."""
+"""Static backend registry. Change `DEFAULT_BACKEND` when deploying on a MetaX C500 machine."""
 
-import os
-
+from gluonkit.backends.metax.backend import MetaxBackend
+from gluonkit.backends.nvidia.backend import NvidiaBackend
 from gluonkit.interfaces.backend import Backend
 
-SUPPORTED_BACKENDS = ("auto", "nvidia", "metax")
+BACKENDS: dict[str, type[Backend]] = {
+    "nvidia": NvidiaBackend,
+    "metax": MetaxBackend,
+}
+
+# 当前机器使用的固定后端（迁移到沐曦 C500 机器时改为 "metax"）
+DEFAULT_BACKEND = "nvidia"
 
 
-def detect_backend_name(device: str = "cuda:0") -> str:
-    """Detect whether the runtime environment is MetaX MACA (C500) or NVIDIA CUDA."""
-    if os.environ.get("MACA_PATH") or os.environ.get("MACA_HOME") or os.environ.get("MCTRITON_HOME"):
-        return "metax"
-    try:
-        import torch
-
-        version_text = (getattr(torch, "__version__", "") or "").lower()
-        if "maca" in version_text or "metax" in version_text:
-            return "metax"
-        if getattr(torch.version, "maca", None):
-            return "metax"
-        if torch.cuda.is_available():
-            dev_name = (torch.cuda.get_device_name(device) or "").lower()
-            if "metax" in dev_name or "c500" in dev_name or "maca" in dev_name:
-                return "metax"
-    except Exception:
-        pass
-    return "nvidia"
-
-
-def get_backend(name: str | None = None, *, device: str = "cuda:0") -> Backend:
-    """Instantiate the requested SIMT GPU backend (`auto`, `nvidia`, or `metax`)."""
-    requested = (name or os.environ.get("GK_BACKEND") or "auto").strip().lower()
-    if requested not in SUPPORTED_BACKENDS:
-        raise ValueError(f"Unsupported backend {requested!r}; choose from {SUPPORTED_BACKENDS}")
-    resolved = detect_backend_name(device) if requested == "auto" else requested
-    if resolved == "metax":
-        from gluonkit.backends.metax.backend import MetaxBackend
-
-        return MetaxBackend(device=device)
-    from gluonkit.backends.nvidia.backend import NvidiaBackend
-
-    return NvidiaBackend(device=device)
+def get_backend(name: str = DEFAULT_BACKEND, *, device: str = "cuda:0") -> Backend:
+    if name not in BACKENDS:
+        raise ValueError(f"Unknown backend {name!r}; registered: {list(BACKENDS)}")
+    return BACKENDS[name](device=device)
