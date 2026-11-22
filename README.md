@@ -33,8 +33,7 @@ gluonKit/
 │   │   ├── checker.py                # check_task：torch.testing.assert_close 校验与误差统计
 │   │   ├── baseline.py               # BaselineStore（.gluonkit/baseline/*.json 读写与身份校验）
 │   │   ├── bencher.py                # measure_baseline / bench_task：独立基线测量与算子测速汇总
-│   │   ├── roofline.py               # validate_metadata / calculate_roofline：TFLOP/s、GB/s、Roofline
-│   │   ├── peaks.py                  # PeakStore（.gluonkit/peaks.json 读写）与 resolve_peaks
+│   │   ├── roofline.py               # load_peaks / save_peaks / resolve_peaks / calculate_roofline：.gluonkit/peaks.json 读写与 Roofline 计算
 │   │   └── history.py                # History：.gluonkit/ 实验记录、摘要读取与快照恢复
 │   └── backends/
 │       ├── __init__.py

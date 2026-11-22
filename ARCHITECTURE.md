@@ -36,8 +36,7 @@ gluonKit/
     │   ├── checker.py                # check_task 数值校验与误差统计
     │   ├── baseline.py               # BaselineStore（绑定 eval_path + eval_source_hash + device_key，支持 --refresh）
     │   ├── bencher.py                # 基线测量、算子测速与实验落盘
-    │   ├── roofline.py               # TFLOP/s、GB/s 与 Roofline 计算
-    │   ├── peaks.py                  # PeakStore（.gluonkit/peaks.json 读写）
+    │   ├── roofline.py               # .gluonkit/peaks.json 中枢读写、TFLOP/s、GB/s 与 Roofline 计算
     │   └── history.py                # History（.gluonkit/history.jsonl 读写与源码快照恢复）
     └── backends/
         ├── __init__.py
@@ -66,11 +65,12 @@ BACKENDS: dict[str, type[Backend]] = {
     "metax": MetaxBackend,
 }
 
-# 当前机器使用的后端；部署到沐曦 C500 时改为 "metax"
+# 当前机器使用的后端与设备；部署到沐曦 C500 时将 DEFAULT_BACKEND 改为 "metax"
 DEFAULT_BACKEND = "nvidia"
+DEFAULT_DEVICE = "cuda:0"
 
 
-def get_backend(name: str = DEFAULT_BACKEND, *, device: str = "cuda:0") -> Backend:
+def get_backend(name: str = DEFAULT_BACKEND, *, device: str = DEFAULT_DEVICE) -> Backend:
     if name not in BACKENDS:
         raise ValueError(f"Unknown backend {name!r}; registered: {list(BACKENDS)}")
     return BACKENDS[name](device=device)

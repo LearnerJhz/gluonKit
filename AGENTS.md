@@ -45,11 +45,11 @@ Gluon 是 Triton 的底层 GPU 编程接口。每个 program 处理一个 tile�
 
 `kernel` 包含 `name` 和毫秒计的 `avg`、`median`、`min`、`p95`、`std`。`metrics` 包含 `speedup`、`tflops`、`gbps`、`roofline`（峰值利用率百分比，数据不足时为 `null`）、`bound_by`（`compute` / `memory` / `null`）和 `roofline_model`（`dual_roofline` / `memory_only` / `compute_only` / `null`）。
 
-`peaks` 是本次 roofline 实际使用的峰值 `{"tflops", "gbps", "source"}`。标定由一次性脚本 `.venv/bin/python scripts/calibrate_peaks.py [--items ...]` 完成（不属于 `gk` 命令，约 10 秒）。所有 GPU 命令固定使用 `cuda:0`。
+`peaks` 是本次从 `.gluonkit/peaks.json` 中枢读取并用于 roofline 计算的峰值 `{"tflops", "gbps"}`。标定由一次性脚本 `.venv/bin/python scripts/calibrate_peaks.py [--items ...]` 完成（写入 `.gluonkit/peaks.json`，不属于 `gk` 命令）。所有 GPU 命令固定使用 `cuda:0`。
 
 ## 硬规则
 
-1. **禁止篡改评测条件**：调优期间只修改算子文件（如 `examples/gemm/gemm.py`），禁止修改 `eval_*.py` 中的输入、参考实现 `ref`、容差 `atol`/`rtol`、`flops`/`bytes_moved` 或 `peaks`/`compute_mode`。调优期间也不要重跑 `scripts/calibrate_peaks.py`（会改变 roofline 分母，使前后轮不可比）。
+1. **禁止篡改评测条件**：调优期间只修改算子文件（如 `examples/gemm/gemm.py`），禁止修改 `eval_*.py` 中的输入、参考实现 `ref`、容差 `atol`/`rtol`、`flops`/`bytes_moved` 或 `compute_mode`。调优期间也不要重跑 `scripts/calibrate_peaks.py`（会改变 roofline 分母，使前后轮不可比）。
 2. **先 `baseline` / `check` 后 `bench`**：首次对某 `eval_<name>.py` 测速前，需先执行 `gk baseline <eval.py>` 生成 `.gluonkit/baseline/baseline_<name>.json`。每次修改算子后**必须先通过 `gk check`**，再执行 `gk bench`；未过 `check` 的测速结果视为无效。
 3. **禁止盲猜 Gluon API**：写代码前查 `gluon-api` skill，遇到未覆盖的原语用 `.venv/bin/gk api list|show [--full]` 查询，或直接读 `.venv/lib/python3.12/site-packages/triton/experimental/gluon/` 源码核实签名。
 4. **单变量迭代与版本保留**：每次修改只验证一个明确假设。通过校验且确认更快后保留。退化或失败时用 `gk restore <id>` 撤销本轮算子改动，保留工作区已有修改。`bench --parent <id>` 用于关联实验记录，可用 `gk history` 回顾多轮指标与资源变化。

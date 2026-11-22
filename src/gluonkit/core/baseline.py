@@ -13,8 +13,14 @@ from gluonkit.core.storage import (
     now_iso,
     resolve_root,
 )
+from gluonkit.interfaces.types import ProbeResult
 
 BASELINES_DIRNAME = "baseline"
+
+
+def device_key(info: ProbeResult) -> str:
+    """Stable key identifying the GPU platform, arch, and model."""
+    return f"{info.platform}:{info.arch}:{info.device_name}"
 
 
 def is_valid_ms(value: Any) -> bool:

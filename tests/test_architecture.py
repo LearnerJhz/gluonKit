@@ -1,5 +1,6 @@
 """Tests for the GluonKit SIMT backend registry, Wave32/Wave64 layout, baseline guard, and roofline."""
 
+import importlib.util
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,12 +10,13 @@ from gluonkit.backends.metax.backend import MetaxBackend, _metax_kernel_summary
 from gluonkit.backends.nvidia.backend import NvidiaBackend
 from gluonkit.backends.nvidia.dump_info import derive_limiting_factor
 from gluonkit.backends.nvidia.profiler import compute_p95
-from gluonkit.backends.registry import BACKENDS, get_backend
+from gluonkit.backends.registry import BACKENDS, DEFAULT_DEVICE, get_backend
+from gluonkit.core.bencher import bench_task
 from gluonkit.core.gluon_api import resolve_module, show_symbols
-from gluonkit.core.peaks import PeakStore, device_key, resolve_peaks
-from gluonkit.core.roofline import calculate_roofline
+from gluonkit.core.roofline import calculate_roofline, load_peaks, resolve_peaks, save_peaks
 from gluonkit.executor import run_baseline, run_check, run_probe
-from gluonkit.interfaces.types import ProbeResult, ProfileData
+from gluonkit.interfaces.types import Output, ProbeResult, ProfileData
+from gluonkit.output import render_json
 
 
 class DummyBackend(MetaxBackend):
@@ -55,10 +57,14 @@ def test_static_backend_registry():
     nv = get_backend("nvidia")
     assert isinstance(nv, NvidiaBackend)
     assert nv.warp_size == 32
+    assert nv.device == DEFAULT_DEVICE
 
     mx = get_backend("metax")
     assert isinstance(mx, MetaxBackend)
     assert mx.warp_size == 64
+    assert mx.device == DEFAULT_DEVICE
+
+    assert get_backend("nvidia", device="cuda:1").device == "cuda:1"
 
     with pytest.raises(ValueError, match="Unknown backend"):
         get_backend("unknown")
@@ -148,6 +154,24 @@ def test_baseline_collision_and_refresh(tmp_path: Path):
 def test_roofline_and_api_full():
     r_mem = calculate_roofline(0.5, bytes_moved=50e6, peaks={"gbps": 100.0})
     assert r_mem["roofline_model"] == "memory_only"
+    assert r_mem["bound_by"] == "memory"
+    assert r_mem["roofline"] == pytest.approx(100.0)
+    assert "roofline_pct" not in r_mem
+
+    r_dual = calculate_roofline(0.5, flops=5e9, bytes_moved=50e6, peaks={"tflops": 20.0, "gbps": 100.0})
+    assert r_dual["roofline_model"] == "dual_roofline"
+    assert r_dual["bound_by"] == "memory"
+    assert r_dual["roofline"] == pytest.approx(100.0)
+
+    bench = bench_task(
+        {"run": lambda: None, "bytes_moved": 50e6},
+        DummyBackend(),
+        calibrated_peaks={"gbps": 100.0},
+    )
+    assert bench.metrics["roofline"] == pytest.approx(100.0)
+    assert bench.metrics["bound_by"] == "memory"
+    assert bench.metrics["roofline_model"] == "memory_only"
+    assert bench.peaks == {"tflops": None, "gbps": 100.0}
 
     assert compute_p95([1.0, 2.0, 3.0, 4.0, 5.0]) == pytest.approx(4.8)
 
@@ -158,42 +182,56 @@ def test_roofline_and_api_full():
     assert "source:" in full_text
 
 
-def test_peak_store_flat_schema_and_handwritten(tmp_path: Path):
-    nv_info = DummyBackend(platform="nvidia", arch="sm86", device_name="RTX 3050").probe()
-    mx_info = DummyBackend(platform="metax", arch="maca_c500", device_name="MetaX C500").probe()
-    store = PeakStore(tmp_path)
-    assert store.display_path() == ".gluonkit/peaks.json"
-    assert store.get(nv_info) is None
+def test_peaks_hub_and_resolve(tmp_path: Path):
+    with pytest.raises(FileNotFoundError, match="Peaks file not found"):
+        load_peaks(tmp_path)
 
-    # Incremental calibration writes flat single-device peaks.json without version/devices nesting
-    store.update(
-        nv_info,
-        {"gbps": {"value": 157.14, "source": "torch.neg fp32 (512 MiB)"}},
-        env={"torch": "2.14.1+cu130", "triton": "3.8.0"},
-    )
-    entry = store.update(
-        nv_info,
-        {"tflops_fp16": {"value": 25.3, "source": "torch.matmul fp16 (8192x8192x8192)"}},
-        env={"torch": "2.14.1+cu130", "triton": "3.8.0"},
-    )
-    raw = json.loads(store.path.read_text(encoding="utf-8"))
-    assert "version" not in raw and "devices" not in raw
-    assert raw["device_key"] == device_key(nv_info)
-    assert raw["peaks"] == {"gbps": 157.14, "tflops_fp16": 25.3}
-    assert raw["sources"] == {
-        "gbps": "torch.neg fp32 (512 MiB)",
-        "tflops_fp16": "torch.matmul fp16 (8192x8192x8192)",
+    save_peaks({"gbps": 157.14}, tmp_path)
+    peaks = save_peaks({"tflops_fp16": 25.3}, tmp_path)
+    assert peaks == {"gbps": 157.14, "tflops_fp16": 25.3}
+
+    raw = json.loads((tmp_path / ".gluonkit" / "peaks.json").read_text(encoding="utf-8"))
+    assert raw == {"gbps": 157.14, "tflops_fp16": 25.3}
+    assert load_peaks(tmp_path) == {"gbps": 157.14, "tflops_fp16": 25.3}
+
+    resolved = resolve_peaks({"flops": 1e9, "compute_mode": "fp16", "bytes_moved": 1e6}, peaks)
+    assert resolved == {"tflops": 25.3, "gbps": 157.14}
+
+
+def test_output_rounding_and_calibrate_envelope(tmp_path: Path, monkeypatch, capsys):
+    rendered = json.loads(render_json(Output.ok({
+        "tflops": 12.3456,
+        "gbps": 157.136,
+        "roofline": 88.1234,
+        "tflops_fp16": 12.3456789,
+    })))
+    assert rendered["info"] == {
+        "tflops": 12.35,
+        "gbps": 157.14,
+        "roofline": 88.12,
+        "tflops_fp16": 12.35,
     }
-    assert entry == raw
 
-    # Different device_key triggers clear mismatch guard on read
-    with pytest.raises(ValueError, match="belongs to"):
-        store.get(mx_info)
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "calibrate_peaks.py"
+    spec = importlib.util.spec_from_file_location("calibrate_peaks", script_path)
+    assert spec is not None and spec.loader is not None
+    calibrate_peaks = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(calibrate_peaks)
 
-    # Hand-authored minimal peaks.json works without device_key/env/sources
-    store.path.write_text(json.dumps({"peaks": {"gbps": 800.0, "tflops_fp16": 120.0}}), encoding="utf-8")
-    loaded = store.get(mx_info)
-    assert loaded is not None
-    resolved, src = resolve_peaks(None, "fp16", loaded["peaks"])
-    assert resolved == {"tflops": 120.0, "gbps": 800.0}
-    assert src == {"tflops": "calibrated:tflops_fp16", "gbps": "calibrated:gbps"}
+    monkeypatch.chdir(tmp_path)
+    assert calibrate_peaks.main(["--items", " , "]) == 1
+    fail_out = json.loads(capsys.readouterr().out)
+    assert fail_out["result"] == "failed"
+    assert "--items" in fail_out["info"]
+
+    monkeypatch.setattr(calibrate_peaks, "get_backend", lambda: DummyBackend())
+    monkeypatch.setattr(
+        calibrate_peaks,
+        "calibrate",
+        lambda items, backend=None: {"gbps": 157.136},
+    )
+    assert calibrate_peaks.main(["--items", "gbps"]) == 0
+    ok_out = json.loads(capsys.readouterr().out)
+    assert ok_out["result"] == "success"
+    assert ok_out["info"]["peaks"] == {"gbps": 157.14}
+    assert (tmp_path / ".gluonkit" / "peaks.json").is_file()

@@ -9,11 +9,12 @@ BACKENDS: dict[str, type[Backend]] = {
     "metax": MetaxBackend,
 }
 
-# 当前机器使用的固定后端（迁移到沐曦 C500 机器时改为 "metax"）
+# 当前机器使用的固定后端与设备（迁移到沐曦 C500 机器时将 DEFAULT_BACKEND 改为 "metax"）
 DEFAULT_BACKEND = "nvidia"
+DEFAULT_DEVICE = "cuda:0"
 
 
-def get_backend(name: str = DEFAULT_BACKEND, *, device: str = "cuda:0") -> Backend:
+def get_backend(name: str = DEFAULT_BACKEND, *, device: str = DEFAULT_DEVICE) -> Backend:
     if name not in BACKENDS:
         raise ValueError(f"Unknown backend {name!r}; registered: {list(BACKENDS)}")
     return BACKENDS[name](device=device)

@@ -1,65 +1,117 @@
-"""Derived rates from mean kernel time (ms), FLOPs and estimated bytes moved."""
+"""Peak configuration hub (`.gluonkit/peaks.json`) and Roofline evaluation."""
 
-from math import isfinite
+from pathlib import Path
+from typing import Any
 
+from gluonkit.core.storage import atomic_write_json, gluonkit_dir, normalize_path, read_json
 
-def validate_metadata(*, flops=None, bytes_moved=None, peaks: dict | None = None) -> None:
-    """Reject malformed workload/peak values; cheap, so bench can call it before GPU work."""
-    # Peaks use TFLOP/s and GB/s, matching the reported rates.
-    if peaks is not None and not isinstance(peaks, dict):
-        raise ValueError("peaks must be a dict with tflops and gbps")
-    peaks = peaks or {}
-    for name, value in (("flops", flops), ("bytes_moved", bytes_moved),
-                        ("peaks.tflops", peaks.get("tflops")), ("peaks.gbps", peaks.get("gbps"))):
-        if value is not None and (isinstance(value, bool) or
-                not isinstance(value, (int, float)) or not isfinite(value) or value <= 0):
-            raise ValueError(f"{name} must be a positive finite number")
+PEAKS_FILENAME = "peaks.json"
 
 
-def roofline_model_name(*, flops=None, bytes_moved=None) -> str | None:
-    """Classify the roofline model scope from declared workload quantities."""
-    has_flops = flops is not None
-    has_bytes = bytes_moved is not None
-    if has_flops and has_bytes:
+def peaks_path(root: str | Path | None = None) -> Path:
+    return gluonkit_dir(root, PEAKS_FILENAME)
+
+
+def load_peaks(root: str | Path | None = None) -> dict[str, float]:
+    """Load `.gluonkit/peaks.json` (mandatory hub for `gk bench`)."""
+    path = peaks_path(root)
+    if not path.is_file():
+        display = normalize_path(path, root)
+        raise FileNotFoundError(
+            f"Peaks file not found: {display} (run `.venv/bin/python scripts/calibrate_peaks.py` first)"
+        )
+    data = read_json(path)
+    raw = data["peaks"] if isinstance(data.get("peaks"), dict) else data
+    return {k: float(v) for k, v in raw.items() if not isinstance(v, bool) and isinstance(v, (int, float))}
+
+
+def save_peaks(updates: dict[str, float], root: str | Path | None = None) -> dict[str, float]:
+    """Merge calibrated peak values into `.gluonkit/peaks.json` and persist atomically."""
+    path = peaks_path(root)
+    peaks = load_peaks(root) if path.is_file() else {}
+    for k, v in updates.items():
+        peaks[k] = float(v)
+    ordered = dict(sorted(peaks.items()))
+    atomic_write_json(path, ordered)
+    return ordered
+
+
+def resolve_peaks(task: dict[str, Any], calibrated: dict[str, float]) -> dict[str, float | None] | None:
+    """Resolve the task's required `{tflops, gbps}` peaks from `.gluonkit/peaks.json`."""
+    flops = task.get("flops")
+    bytes_moved = task.get("bytes_moved")
+    mode = task.get("compute_mode")
+
+    tflops_peak: float | None = None
+    if flops is not None or mode is not None:
+        if not mode:
+            raise ValueError("Task declares 'flops' but no 'compute_mode' (e.g. 'fp16', 'bf16', 'tf32', 'fp32')")
+        key = f"tflops_{mode}"
+        if key not in calibrated:
+            raise ValueError(
+                f"Peak {key!r} is missing from .gluonkit/peaks.json "
+                f"(run `.venv/bin/python scripts/calibrate_peaks.py --items {key}`)"
+            )
+        tflops_peak = float(calibrated[key])
+
+    gbps_peak: float | None = None
+    if bytes_moved is not None:
+        if "gbps" not in calibrated:
+            raise ValueError(
+                "Peak 'gbps' is missing from .gluonkit/peaks.json "
+                "(run `.venv/bin/python scripts/calibrate_peaks.py --items gbps`)"
+            )
+        gbps_peak = float(calibrated["gbps"])
+
+    if tflops_peak is None and gbps_peak is None:
+        return None
+    return {"tflops": tflops_peak, "gbps": gbps_peak}
+
+
+def roofline_model_name(*, flops: float | None = None, bytes_moved: float | None = None) -> str | None:
+    if flops is not None and bytes_moved is not None:
         return "dual_roofline"
-    if has_bytes:
+    if bytes_moved is not None:
         return "memory_only"
-    if has_flops:
+    if flops is not None:
         return "compute_only"
     return None
 
 
-def calculate_roofline(avg_ms: float | None, *, flops=None,
-                       bytes_moved=None, peaks: dict | None = None) -> dict:
-    validate_metadata(flops=flops, bytes_moved=bytes_moved, peaks=peaks)
+def calculate_roofline(
+    avg_ms: float | None,
+    *,
+    flops: float | None = None,
+    bytes_moved: float | None = None,
+    peaks: dict[str, float | None] | None = None,
+) -> dict[str, Any]:
+    """Compute achieved throughput (TFLOP/s, GB/s), bottleneck, and roofline utilization (%)."""
     peaks = peaks or {}
     peak_compute, peak_memory = peaks.get("tflops"), peaks.get("gbps")
-    model = roofline_model_name(flops=flops, bytes_moved=bytes_moved)
-
-    result = dict(
-        tflops=None,
-        gbps=None,
-        roofline_pct=None,
-        bound_by=None,
-        roofline_model=model,
-    )
-    if avg_ms is None or not isfinite(avg_ms) or avg_ms <= 0:
+    result: dict[str, Any] = {
+        "tflops": None,
+        "gbps": None,
+        "roofline": None,
+        "bound_by": None,
+        "roofline_model": roofline_model_name(flops=flops, bytes_moved=bytes_moved),
+    }
+    if avg_ms is None or avg_ms <= 0:
         return result
+
     seconds = avg_ms * 1e-3
     if flops is not None:
         result["tflops"] = flops / seconds / 1e12
     if bytes_moved is not None:
         result["gbps"] = bytes_moved / seconds / 1e9
-    # A resource is "in play" once the task declares its workload (flops / bytes_moved). Every
-    # declared workload needs its peak, otherwise the bound would silently ignore a resource
-    # (e.g. a gemm without compute_mode must not be rated by its memory time alone).
-    ideal = {}  # resource -> seconds needed at peak rate
-    if flops is not None and peak_compute is not None:
+
+    ideal: dict[str, float] = {}
+    if flops is not None and peak_compute:
         ideal["compute"] = flops / (peak_compute * 1e12)
-    if bytes_moved is not None and peak_memory is not None:
+    if bytes_moved is not None and peak_memory:
         ideal["memory"] = bytes_moved / (peak_memory * 1e9)
     declared = (flops is not None) + (bytes_moved is not None)
     if ideal and len(ideal) == declared:
-        result["bound_by"] = max(ideal, key=ideal.get)  # ties resolve to compute (first inserted)
-        result["roofline_pct"] = ideal[result["bound_by"]] / seconds * 100
+        bound_by = max(ideal, key=ideal.get)
+        result["bound_by"] = bound_by
+        result["roofline"] = ideal[bound_by] / seconds * 100
     return result

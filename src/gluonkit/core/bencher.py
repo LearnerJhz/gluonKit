@@ -7,10 +7,9 @@ import shutil
 import tempfile
 from typing import Any, Iterator
 
-from gluonkit.core.baseline import BaselineStore, baseline_env, is_valid_ms
+from gluonkit.core.baseline import BaselineStore, baseline_env, device_key, is_valid_ms
 from gluonkit.core.history import History, source_hash
-from gluonkit.core.peaks import PeakStore, device_key, resolve_peaks
-from gluonkit.core.roofline import calculate_roofline, validate_metadata
+from gluonkit.core.roofline import calculate_roofline, load_peaks, resolve_peaks
 from gluonkit.interfaces.backend import Backend
 from gluonkit.interfaces.types import BenchResult
 
@@ -73,34 +72,24 @@ def bench_task(
     trace_path: str | None = None,
     calibrated_peaks: dict[str, float] | None = None,
 ) -> BenchResult:
-    """Measure `task['run']` and optionally compare against a pre-stored `baseline` dict.
-
-    `calibrated_peaks` (from `.gluonkit/peaks.json`) fills peak fields the task omits.
-    """
+    """Measure `task['run']` and compute speedup + roofline metrics from `.gluonkit/peaks.json`."""
     opts = (options or BenchOptions()).with_overrides(iters=iters, warmup=warmup)
-    if baseline is not None:
-        if not isinstance(baseline, dict) or not is_valid_ms(baseline.get("avg_ms")):
-            raise ValueError("baseline must be a dict with a finite positive 'avg_ms'")
-    peaks, peaks_source = resolve_peaks(task.get("peaks"), task.get("compute_mode"), calibrated_peaks)
-    metadata = {"flops": task.get("flops"), "bytes_moved": task.get("bytes_moved"), "peaks": peaks}
-    validate_metadata(**metadata)  # Fail on bad metadata before executing GPU work.
+    peaks = resolve_peaks(task, calibrated_peaks or {})
     measured = backend.profile(
         task["run"], opts.iters, opts.warmup, flush_l2=opts.flush_l2, trace_path=trace_path,
     )
     speedup = float(baseline["avg_ms"]) / measured.avg_ms if baseline is not None and measured.avg_ms > 0 else None
-    rates = calculate_roofline(measured.avg_ms, **metadata)
+    rates = calculate_roofline(
+        measured.avg_ms,
+        flops=task.get("flops"),
+        bytes_moved=task.get("bytes_moved"),
+        peaks=peaks,
+    )
     return BenchResult(
         kernel_profile=measured,
-        metrics={
-            "speedup": speedup,
-            "tflops": rates["tflops"],
-            "gbps": rates["gbps"],
-            "roofline": rates["roofline_pct"],
-            "bound_by": rates["bound_by"],
-            "roofline_model": rates["roofline_model"],
-        },
+        metrics={"speedup": speedup, **rates},
         baseline=baseline,
-        peaks=None if peaks is None else {**peaks, "source": peaks_source},
+        peaks=peaks,
     )
 
 
@@ -191,13 +180,12 @@ def run_benchmark(
     root: str | Path | None = None,
     options: BenchOptions | None = None,
 ) -> dict[str, Any]:
-    """Run target benchmark against stored baseline and persist history + source snapshots."""
+    """Run target benchmark against stored baseline and `.gluonkit/peaks.json`, then persist history."""
     opts = options or BenchOptions()
     history = History(root=root)
     parent = history.get(parent_id)["id"] if parent_id is not None else None
     info = backend.probe()
-    peak_entry = PeakStore(history.root).get(info)
-    calibrated_peaks = peak_entry["peaks"] if peak_entry is not None else None
+    calibrated_peaks = load_peaks(history.root)
 
     eval_rel = history.normalize_path(eval_path)
     eval_hash = source_hash(eval_source)

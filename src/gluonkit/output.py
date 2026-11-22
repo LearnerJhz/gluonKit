@@ -11,16 +11,10 @@ from typing import Any, Callable, TextIO
 from gluonkit.interfaces.types import Output
 
 _MS_KEYS = frozenset({"avg", "median", "min", "p95", "std", "avg_ms", "p95_ms", "baseline_ms", "baseline_time_ms"})
-_PCT_KEYS = frozenset({"roofline", "roofline_pct", "occupancy_pct", "delta_vs_parent_pct"})
+_PCT_KEYS = frozenset({"roofline", "occupancy_pct", "delta_vs_parent_pct"})
 _RATIO_KEYS = frozenset({"speedup", "speedup_vs_baseline"})
 _RATE_KEYS = frozenset({"tflops", "gbps"})
 _ERR_KEYS = frozenset({"atol", "rtol", "max_abs_err", "max_rel_err"})
-
-
-def _is_rate_key(key: str | None) -> bool:
-    # tflops/gbps plus calibrated item names such as tflops_fp16 or theoretical_gbps.
-    return key is not None and (key in _RATE_KEYS or key.startswith(("tflops_", "gbps_"))
-                                or key.endswith(("_tflops", "_gbps")))
 
 
 def _round_float(value: float, key: str | None = None) -> float:
@@ -39,7 +33,7 @@ def _round_float(value: float, key: str | None = None) -> float:
         ndigits = 2
     elif key in _RATIO_KEYS:
         ndigits = 3
-    elif _is_rate_key(key):
+    elif key in _RATE_KEYS or (key is not None and key.startswith("tflops_")):
         ndigits = 2 if abs(value) >= 1 else 4
     else:
         ndigits = 6
