@@ -1,6 +1,6 @@
 # RTX 3050 Laptop 算子实测记录
 
-每个算子单独建目录。[Softmax](softMax/README.md) 是记录示例。
+每个算子单独建目录。已有 [Softmax](softMax/README.md) 和 [GEMM](gemm/README.md) 实测记录。
 
 1. 拷贝本机表现最好的 kernel 和配套的 `eval_<name>.py`。
 2. 在算子目录的 `README.md` 写明输入形状、dtype、布局和计时口径，再用「实现 / 平均耗时 / 源码」表格记录结果。

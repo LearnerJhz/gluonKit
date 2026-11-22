@@ -4,6 +4,10 @@
 
 > 以本文件、[ARCHITECTURE.md](ARCHITECTURE.md) 与 `.venv/bin/gk --help` 为真值来源。
 
+## 一些高性能算子实现
+
+仓库根目录下的 `bench-*/` 是维护者的历史开发记录，里面有一些算子的高性能实现，必要时可以参考。
+
 ## Gluon API 知识库
 
 Gluon 是 Triton 的底层 GPU 编程接口。每个 program 处理一个 tile，layout 描述元素在线程和寄存器上的分布。本仓库按 Triton 3.8.0 整理了两类资料，按当前任务选读即可。[上游 API 参考](https://triton-lang.org/main/gluon/api/index.html)
@@ -25,6 +29,7 @@ Gluon 是 Triton 的底层 GPU 编程接口。每个 program 处理一个 tile�
 - CLI 入口：`.venv/bin/gk`
 - 后端注册：[src/gluonkit/backends/registry.py](src/gluonkit/backends/registry.py) 静态注册了 `"nvidia"`（`NvidiaBackend`）与 `"metax"`（`MetaxBackend`），通过 `DEFAULT_BACKEND` 指定当前机器的确定后端（在沐曦机器上改为 `"metax"`）。
 - Triton 缓存：`gk` 将 `TRITON_CACHE_DIR` 固定设为当前目录下的 `.gluonkit/triton_cache`（沙盒内可直接运行，无需额外配置）。
+- 沙箱与 `probe` 探测：部分环境下在沙箱内运行 `gk probe` 获取 GPU 硬件信息可能会因设备或驱动访问受限而报错。若确认报错由沙箱限制引起，可申请在沙箱外执行 `.venv/bin/gk probe`，或自行通过命令获取所需信息（如 `nvidia-smi` / 对应平台设备查询命令，以及用 `.venv/bin/python` 查询 `torch.__version__`、`triton.__version__` 与 `torch.cuda.get_device_properties(0)`）。
 
 ## CLI 命令与输出契约
 
@@ -32,7 +37,7 @@ Gluon 是 Triton 的底层 GPU 编程接口。每个 program 处理一个 tile�
 
 | 命令 | 用途 | 关键返回（`info`） |
 |---|---|---|
-| `gk probe` | 查询本机 GPU 架构、SM/CU 数、`warp_size`、共享内存上限、显存及软件版本 | `device_name`, `platform`, `arch`, `compiler_version`, `torch_version`, `warp_size`, `sm_count`, `smem_per_block_optin`, `vram_bytes` |
+| `gk probe` | 查询本机 GPU 架构、SM/CU 数、`warp_size`、共享内存上限、显存及软件版本（若在沙箱中报错，可改为沙箱外执行或自行通过命令获取） | `device_name`, `platform`, `arch`, `compiler_version`, `torch_version`, `warp_size`, `sm_count`, `smem_per_block_optin`, `vram_bytes` |
 | `gk layout "<expr>" --shape 64,64 [--hardware]` | 离线查看线程/warp 与张量映射（按当前后端 `warp_size` 校验 `threads_per_warp` 乘积） | 格式化映射文本 |
 | `gk bank-conflicts --register-layout "<expr>" --shared-layout "<expr>" --shape 64,32 --dtype float16` | 离线调用 `gl.bank_conflicts()`（无需 GPU；共享布局支持 `SwizzledSharedLayout`） | `bank_conflicts_count`（每个 wavefront 的额外访问次数，0 表示无冲突） |
 | `gk check <eval.py>` | 触发 JIT 编译并校验与 `ref()` 数值一致（默认 `atol=rtol=1e-2`） | `passed`, `atol`, `rtol`, `max_abs_err`, `max_rel_err` |
