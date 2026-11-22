@@ -45,7 +45,7 @@ Gluon 是 Triton 的底层 GPU 编程接口。每个 program 处理一个 tile�
 
 `kernel` 包含 `name` 和毫秒计的 `avg`、`median`、`min`、`p95`、`std`。`metrics` 包含 `speedup`、`tflops`、`gbps`、`roofline`（峰值利用率百分比，数据不足时为 `null`）、`bound_by`（`compute` / `memory` / `null`）和 `roofline_model`（`dual_roofline` / `memory_only` / `compute_only` / `null`）。
 
-`peaks` 是本次从 `.gluonkit/peaks.json` 中枢读取并用于 roofline 计算的峰值 `{"tflops", "gbps"}`。标定由一次性脚本 `.venv/bin/python scripts/calibrate_peaks.py [--items ...]` 完成（写入 `.gluonkit/peaks.json`，不属于 `gk` 命令）。所有 GPU 命令固定使用 `cuda:0`。
+`peaks` 是本次从 `.gluonkit/peaks.json` 中枢读取并用于 roofline 计算的峰值 `{"tflops", "gbps"}`。标定由一次性脚本 `.venv/bin/python scripts/calibrate_peaks.py` 完成（写入 `.gluonkit/peaks.json`，不属于 `gk` 命令）。所有 GPU 命令固定使用 `cuda:0`。
 
 ## 评测脚本契约（`eval_<name>.py`）
 

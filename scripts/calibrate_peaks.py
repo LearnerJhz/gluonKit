@@ -2,7 +2,7 @@
 
 Writes calibrated peaks directly to `./.gluonkit/peaks.json`::
 
-    .venv/bin/python scripts/calibrate_peaks.py [--items gbps,tflops_fp16,...]
+    .venv/bin/python scripts/calibrate_peaks.py
 """
 
 import argparse
@@ -91,42 +91,32 @@ ITEMS: dict[str, Callable[[Backend], float]] = {
 }
 
 
-def calibrate(items: list[str] | None = None, *, backend: Backend | None = None) -> dict[str, float]:
-    """Run the selected (default: all) calibration items on the active single-machine backend."""
+def calibrate(*, backend: Backend | None = None) -> dict[str, float]:
+    """Run all calibration items on the active single-machine backend."""
     import torch
 
     active = backend or get_backend()
-    selected = list(dict.fromkeys(items)) if items else list(ITEMS)
-    for name in selected:
-        if name not in ITEMS:
-            raise ValueError(f"unknown calibration item {name!r}; available: {list(ITEMS)}")
     results: dict[str, float] = {}
     with torch.cuda.device(active.device):
-        for name in selected:
-            results[name] = ITEMS[name](active)
+        for name, fn in ITEMS.items():
+            results[name] = fn(active)
             torch.cuda.empty_cache()
     return results
 
 
-def _run(items_arg: str | None) -> dict[str, Any]:
-    items = [i.strip() for i in items_arg.split(",") if i.strip()] if items_arg else None
-    if items_arg and not items:
-        raise ValueError("--items must name at least one calibration item")
+def _run() -> dict[str, Any]:
     backend = get_backend()
-    calibrated = calibrate(items, backend=backend)
-    peaks = save_peaks(calibrated)
+    peaks = save_peaks(calibrate(backend=backend))
     return {
         "file": normalize_path(peaks_path()),
-        "calibrated": calibrated,
         "peaks": peaks,
     }
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Calibrate achievable peaks and save them to .gluonkit/peaks.json")
-    parser.add_argument("--items", help="Comma-separated items to (re)calibrate; default: all")
-    args = parser.parse_args(argv)
-    return emit_json(capture_run(lambda: _run(args.items)))
+    parser.parse_args(argv)
+    return emit_json(capture_run(_run))
 
 
 if __name__ == "__main__":

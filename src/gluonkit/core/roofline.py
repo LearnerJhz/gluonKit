@@ -25,14 +25,10 @@ def load_peaks(root: str | Path | None = None) -> dict[str, float]:
     return {k: float(v) for k, v in raw.items() if not isinstance(v, bool) and isinstance(v, (int, float))}
 
 
-def save_peaks(updates: dict[str, float], root: str | Path | None = None) -> dict[str, float]:
-    """Merge calibrated peak values into `.gluonkit/peaks.json` and persist atomically."""
-    path = peaks_path(root)
-    peaks = load_peaks(root) if path.is_file() else {}
-    for k, v in updates.items():
-        peaks[k] = float(v)
-    ordered = dict(sorted(peaks.items()))
-    atomic_write_json(path, ordered)
+def save_peaks(peaks: dict[str, float], root: str | Path | None = None) -> dict[str, float]:
+    """Persist calibrated peak values to `.gluonkit/peaks.json` atomically."""
+    ordered = {k: float(v) for k, v in sorted(peaks.items())}
+    atomic_write_json(peaks_path(root), ordered)
     return ordered
 
 
@@ -50,7 +46,7 @@ def resolve_peaks(task: dict[str, Any], calibrated: dict[str, float]) -> dict[st
         if key not in calibrated:
             raise ValueError(
                 f"Peak {key!r} is missing from .gluonkit/peaks.json "
-                f"(run `.venv/bin/python scripts/calibrate_peaks.py --items {key}`)"
+                "(run `.venv/bin/python scripts/calibrate_peaks.py`)"
             )
         tflops_peak = float(calibrated[key])
 
@@ -59,7 +55,7 @@ def resolve_peaks(task: dict[str, Any], calibrated: dict[str, float]) -> dict[st
         if "gbps" not in calibrated:
             raise ValueError(
                 "Peak 'gbps' is missing from .gluonkit/peaks.json "
-                "(run `.venv/bin/python scripts/calibrate_peaks.py --items gbps`)"
+                "(run `.venv/bin/python scripts/calibrate_peaks.py`)"
             )
         gbps_peak = float(calibrated["gbps"])
 
