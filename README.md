@@ -31,7 +31,7 @@ gluonKit/
 │   │   ├── storage.py                # .gluonkit/ 原子 JSON 读写与路径规范化
 │   │   ├── gluon_api.py              # Gluon API 自省（支持 --full，纯文本，无需 GPU）
 │   │   ├── checker.py                # check_task：torch.testing.assert_close 校验与误差统计
-│   │   ├── baseline.py               # BaselineStore（.gluonkit/baseline/*.json 读写与身份校验）
+│   │   ├── baseline.py               # BaselineStore（.gluonkit/baseline/*.json 固定基线读写）
 │   │   ├── bencher.py                # measure_baseline / bench_task：独立基线测量与算子测速汇总
 │   │   ├── roofline.py               # load_peaks / save_peaks / resolve_peaks / calculate_roofline：.gluonkit/peaks.json 读写与 Roofline 计算
 │   │   └── history.py                # History：.gluonkit/ 实验记录、摘要读取与快照恢复
@@ -64,7 +64,7 @@ pip install -e .
 .venv/bin/gk probe
 .venv/bin/python scripts/calibrate_peaks.py          # 环境初始化时一次性标定本机峰值
 .venv/bin/gk check examples/gemm/eval_gemm.py
-.venv/bin/gk baseline examples/gemm/eval_gemm.py     # 建立（或 --refresh 刷新）参考基线
+.venv/bin/gk baseline examples/gemm/eval_gemm.py     # 建立固定参考基线（已存在则直接返回）
 .venv/bin/gk bench examples/gemm/eval_gemm.py --note "baseline"
 .venv/bin/gk dump-info examples/gemm/eval_gemm.py
 .venv/bin/gk history examples/gemm/eval_gemm.py --limit 5

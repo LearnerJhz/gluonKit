@@ -7,7 +7,7 @@ import sys
 from gluonkit.core.baseline import BaselineStore
 from gluonkit.core.bencher import record_baseline, run_benchmark
 from gluonkit.core.checker import check_task
-from gluonkit.core.history import History, _extract_metrics, source_hash, summarize_record
+from gluonkit.core.history import History, _extract_metrics, summarize_record
 from gluonkit.core.storage import gluonkit_dir
 from gluonkit.interfaces.backend import Backend
 
@@ -93,17 +93,15 @@ def run_baseline(
     eval_path: str,
     backend: Backend,
     *,
-    refresh: bool = False,
     root: str | Path | None = None,
 ) -> dict:
     """Return existing baseline JSON if present and valid, otherwise measure `ref()` once and save it."""
-    path, eval_source = _read_eval_file(eval_path)
-    if not refresh:
-        existing = BaselineStore(root).load_record(path, eval_source_hash=source_hash(eval_source))
-        if existing is not None:
-            return existing
+    path, _ = _read_eval_file(eval_path)
+    existing = BaselineStore(root).load_record(path)
+    if existing is not None:
+        return existing
     _, task = _prepare_task(path, backend)
-    return record_baseline(path, task, backend, root=root, refresh=refresh)
+    return record_baseline(path, task, backend, root=root)
 
 
 def run_bench(

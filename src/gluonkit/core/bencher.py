@@ -7,8 +7,8 @@ import shutil
 import tempfile
 from typing import Any, Iterator
 
-from gluonkit.core.baseline import BaselineStore, baseline_env, device_key, is_valid_ms
-from gluonkit.core.history import History, source_hash
+from gluonkit.core.baseline import BaselineStore, device_key, is_valid_ms
+from gluonkit.core.history import History
 from gluonkit.core.roofline import calculate_roofline, load_peaks, resolve_peaks
 from gluonkit.interfaces.backend import Backend
 from gluonkit.interfaces.types import BenchResult
@@ -23,23 +23,16 @@ class BenchOptions:
 
     warmup: int = DEFAULT_WARMUP
     iters: int = DEFAULT_ITERS
-    flush_l2: bool = False
+    flush_l2: bool = True
 
-    def with_overrides(self, *, iters: int | None = None, warmup: int | None = None) -> "BenchOptions":
+    def with_overrides(
+        self, *, iters: int | None = None, warmup: int | None = None, flush_l2: bool | None = None,
+    ) -> "BenchOptions":
         return BenchOptions(
             warmup=self.warmup if warmup is None else warmup,
             iters=self.iters if iters is None else iters,
-            flush_l2=self.flush_l2,
+            flush_l2=self.flush_l2 if flush_l2 is None else flush_l2,
         )
-
-    def to_baseline_dict(self) -> dict[str, Any]:
-        return {"warmup": self.warmup, "iters": self.iters, "flush_l2": self.flush_l2}
-
-    def to_history_dict(self, timing: str | None = None) -> dict[str, Any]:
-        data = self.to_baseline_dict()
-        if timing:
-            data["timing"] = timing
-        return data
 
 
 def measure_baseline(
@@ -138,26 +131,20 @@ def record_baseline(
     *,
     root: str | Path | None = None,
     options: BenchOptions | None = None,
-    refresh: bool = False,
 ) -> dict[str, Any]:
-    """Return existing baseline file if valid and not refreshing, otherwise measure `task['ref']` once and save."""
+    """Return existing baseline file if present, otherwise measure `task['ref']` once and save."""
     store = BaselineStore(root)
+    existing = store.load_record(eval_path)
+    if existing is not None:
+        return existing
+
     info = backend.probe()
     dev_key = device_key(info)
-    eval_hash = source_hash(eval_path.read_bytes())
-    if not refresh:
-        existing = store.load_record(eval_path, eval_source_hash=eval_hash, device_key=dev_key)
-        if existing is not None:
-            return existing
-
     opts = options or BenchOptions()
     measured_baseline = measure_baseline(task, backend, options=opts)
     saved_path, entry = store.save(
         eval_path,
-        env=baseline_env(info),
-        measurement_options=opts.to_baseline_dict(),
         baseline=measured_baseline,
-        eval_source_hash=eval_hash,
         device_key=dev_key,
     )
     return {
@@ -188,10 +175,7 @@ def run_benchmark(
     calibrated_peaks = load_peaks(history.root)
 
     eval_rel = history.normalize_path(eval_path)
-    eval_hash = source_hash(eval_source)
-    stored_baseline = BaselineStore(history.root).lookup(
-        eval_path, eval_source_hash=eval_hash, device_key=device_key(info),
-    )
+    stored_baseline = BaselineStore(history.root).lookup(eval_path)
 
     with _trace_session(trace, history.directory) as trace_path:
         result = bench_task(

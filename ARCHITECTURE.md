@@ -34,7 +34,7 @@ gluonKit/
     │   ├── storage.py                # .gluonkit/ 目录与原子 JSON 读写
     │   ├── gluon_api.py              # Gluon API 自省（支持 gk api list / show [--full]）
     │   ├── checker.py                # check_task 数值校验与误差统计
-    │   ├── baseline.py               # BaselineStore（绑定 eval_path + eval_source_hash + device_key，支持 --refresh）
+    │   ├── baseline.py               # BaselineStore（.gluonkit/baseline/*.json 固定基线读写）
     │   ├── bencher.py                # 基线测量、算子测速与实验落盘
     │   ├── roofline.py               # .gluonkit/peaks.json 中枢读写、TFLOP/s、GB/s 与 Roofline 计算
     │   └── history.py                # History（.gluonkit/history.jsonl 读写与源码快照恢复）

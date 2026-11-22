@@ -36,8 +36,8 @@ Gluon 是 Triton 的底层 GPU 编程接口。每个 program 处理一个 tile�
 | `gk layout "<expr>" --shape 64,64 [--hardware]` | 离线查看线程/warp 与张量映射（按当前后端 `warp_size` 校验 `threads_per_warp` 乘积） | 格式化映射文本 |
 | `gk bank-conflicts --register-layout "<expr>" --shared-layout "<expr>" --shape 64,32 --dtype float16` | 离线调用 `gl.bank_conflicts()`（无需 GPU；共享布局支持 `SwizzledSharedLayout`） | `bank_conflicts_count`（每个 wavefront 的额外访问次数，0 表示无冲突） |
 | `gk check <eval.py>` | 触发 JIT 编译并校验与 `ref()` 数值一致（默认 `atol=rtol=1e-2`） | `passed`, `atol`, `rtol`, `max_abs_err`, `max_rel_err` |
-| `gk baseline <eval.py> [--refresh]` | 若 `.gluonkit/baseline/baseline_<name>.json` 尚不存在则测量一次 `ref()` 并存入；已存在时校验 `eval_path`、`eval_source_hash` 与 `device_key` 后直接返回（`--refresh` 强制重测） | `file`, `eval_path`, `eval_source_hash`, `device_key`, `env`, `measurement_options`, `measured_at`, `baseline` |
-| `gk bench <eval.py> [--note "..."] [--parent <id>] [--trace]` | 默认只对目标 kernel 预热 10 次、测量 100 次，读取已存基线算 `speedup` 并写入 `.gluonkit/` | `history_id`, `trace_path`, `kernel`, `metrics`, `baseline`, `peaks` |
+| `gk baseline <eval.py>` | 采取固定基线原则：在测速与调优算子之前先跑一次，测量 `ref()` 并存入 `.gluonkit/baseline/baseline_<name>.json`；已存在时直接返回不重测，后续所有 `gk bench` 均在此固定基线之上跑并对比。测量口径与 `gk bench` 一致：默认预热 10 次、每次迭代前清空 L2 Cache（`flush_l2=true`）后测量 100 次 | `file`, `device_key`, `measured_at`, `baseline` |
+| `gk bench <eval.py> [--note "..."] [--parent <id>] [--trace]` | 与 `gk baseline` 同口径（默认预热 10 次、每次迭代前清空 L2 Cache，`flush_l2=true`，测量 100 次），读取已存基线算 `speedup` 并写入 `.gluonkit/` | `history_id`, `trace_path`, `kernel`, `metrics`, `baseline`, `peaks` |
 | `gk api list [module]` / `gk api show [-m module] [--full] <symbol>...` | 离线查询本机 `triton.experimental.gluon` 的真实 API（无需 GPU）。**例外：输出纯文本，不是 JSON 信封**；`--full` 输出完整 docstring 与源码文件行号 | 纯文本 |
 | `gk dump-info <eval.py>` | 运行一次，导出后端中间产物到 `.gluonkit/dump_info/<eval名>/<kernel名>/<hash>/` | `artifacts`（文件路径）, `summary`（`n_regs`, `n_spills`, `n_max_threads`, `shared_bytes`, `allocated_shared_bytes`, `num_warps`, `blocks_per_sm`, `occupancy_pct`, `limiting_factor`） |
 | `gk history [<kernel_or_eval>] [--limit N]` | 查看已记录的 `bench` 实验摘要与资源占用。`.gluonkit/history.jsonl` 是 `gk bench` 生成的原始实验记录，可直接读取 | `total`, `records`（`id`, `parent_id`, `trace_path`, `note`, `avg_ms`, `median_ms`, `min_ms`, `p95_ms`, `std_ms`, `delta_vs_parent_pct`, `speedup`, `tflops`, `gbps`, `roofline`, `summary`） |
@@ -46,6 +46,19 @@ Gluon 是 Triton 的底层 GPU 编程接口。每个 program 处理一个 tile�
 `kernel` 包含 `name` 和毫秒计的 `avg`、`median`、`min`、`p95`、`std`。`metrics` 包含 `speedup`、`tflops`、`gbps`、`roofline`（峰值利用率百分比，数据不足时为 `null`）、`bound_by`（`compute` / `memory` / `null`）和 `roofline_model`（`dual_roofline` / `memory_only` / `compute_only` / `null`）。
 
 `peaks` 是本次从 `.gluonkit/peaks.json` 中枢读取并用于 roofline 计算的峰值 `{"tflops", "gbps"}`。标定由一次性脚本 `.venv/bin/python scripts/calibrate_peaks.py [--items ...]` 完成（写入 `.gluonkit/peaks.json`，不属于 `gk` 命令）。所有 GPU 命令固定使用 `cuda:0`。
+
+## 评测脚本契约（`eval_<name>.py`）
+
+评测脚本须与待测算子 `<name>.py` 同目录配对、实际导入 `<name>.py`，并定义 `prepare(device)` 返回任务字典（字段逻辑见 [checker.py](src/gluonkit/core/checker.py)、[roofline.py](src/gluonkit/core/roofline.py) 与 [examples/gemm/eval_gemm.py](examples/gemm/eval_gemm.py)）：
+
+| 字段 | 是否必填 | 作用与写法建议 |
+|---|---|---|
+| `"run"` | **必填** | 无参 `lambda`（如 `lambda: gemm(a, b)`）。会在 `check` / `dump-info` / `bench` 里被反复调用，里面只放算子调用，不要放构造数据、`.to(device)` 等操作，也不要原地修改输入张量。 |
+| `"ref"` | `check` / `baseline` 必填 | 无参 `lambda`（如 `lambda: torch.matmul(a, b)`），作为数值真值和 `speedup` 基准。返回值结构、shape、dtype 需与 `run()` 一致。 |
+| `"atol"` / `"rtol"` | 可选（默认 `1e-2`） | 传给 `torch.testing.assert_close` 的绝对/相对误差容限（见 `check_task`）。`fp32` 算子可收紧到如 `1e-5`，低精度或大归约按需调整。 |
+| `"flops"` | 可选 | 算子的理论浮点运算次数（如 GEMM 为 `2 * M * N * K`，乘加各算 1 次）。 |
+| `"compute_mode"` | 写了 `flops` 时必填 | 决定去 `.gluonkit/peaks.json` 查哪一档算力峰值，预置：`"fp16"`、`"bf16"`、`"tf32"`、`"fp32"`。 |
+| `"bytes_moved"` | 可选 | 理论最小全局显存读写字节数（读入输入 + 写出输出，元素个数 × 单元素字节数，例如 `float16` 乘 `2`、`float32` 乘 `4`）。纯访存算子可只填此项，走 `memory_only` 模型。 |
 
 ## 硬规则
 

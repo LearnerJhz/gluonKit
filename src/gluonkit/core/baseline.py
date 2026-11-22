@@ -1,6 +1,5 @@
 """Per-eval stored baseline measurements under `.gluonkit/baseline/`."""
 
-import hashlib
 import json
 from math import isfinite
 from pathlib import Path
@@ -27,16 +26,6 @@ def is_valid_ms(value: Any) -> bool:
     return not isinstance(value, bool) and isinstance(value, (int, float)) and isfinite(value) and value > 0
 
 
-def baseline_env(info: Any) -> dict[str, str]:
-    """Runtime software versions recorded with a stored baseline."""
-    env: dict[str, str] = {}
-    for field, key in (("torch_version", "torch"), ("compiler_version", "triton")):
-        value = getattr(info, field, None)
-        if value:
-            env[key] = value
-    return env
-
-
 def baseline_filename(eval_path: str | Path) -> str:
     """Derive `baseline_<name>.json` from an `eval_<name>.py` (or `<name>.py`) path."""
     stem = Path(eval_path).stem
@@ -61,64 +50,19 @@ class BaselineStore:
             return None
         return json.loads(target.read_text(encoding="utf-8"))
 
-    def _validate(
-        self,
-        entry: dict[str, Any],
-        eval_path: str | Path,
-        *,
-        eval_source_hash: str | None = None,
-        device_key: str | None = None,
-    ) -> None:
-        resolved = Path(eval_path).resolve()
-        eval_rel = normalize_path(resolved, self.root)
-        current_hash = eval_source_hash or (
-            hashlib.sha256(resolved.read_bytes()).hexdigest() if resolved.is_file() else None
-        )
-        display = self.display_path(self.target_path(eval_path))
-
-        if entry.get("eval_path") and entry["eval_path"] != eval_rel:
-            raise ValueError(
-                f"Baseline collision in {display}: stored baseline belongs to {entry['eval_path']!r}, "
-                f"not {eval_rel!r} (run `gk baseline {eval_rel} --refresh` to overwrite)"
-            )
-        if entry.get("eval_source_hash") and current_hash and entry["eval_source_hash"] != current_hash:
-            raise ValueError(
-                f"Baseline stale in {display}: {eval_rel!r} changed "
-                f"(run `gk baseline {eval_rel} --refresh` to re-measure)"
-            )
-        if entry.get("device_key") and device_key and entry["device_key"] != device_key:
-            raise ValueError(
-                f"Baseline device mismatch in {display}: stored for {entry['device_key']!r}, "
-                f"current device is {device_key!r} (run `gk baseline {eval_rel} --refresh`)"
-            )
-
-    def load_record(
-        self,
-        eval_path: str | Path,
-        *,
-        eval_source_hash: str | None = None,
-        device_key: str | None = None,
-    ) -> dict[str, Any] | None:
-        """Return `{"file": ..., **entry}` if a matching baseline file exists, otherwise None."""
+    def load_record(self, eval_path: str | Path) -> dict[str, Any] | None:
+        """Return `{"file": ..., **entry}` if a baseline file exists, otherwise None."""
         entry = self._read(eval_path)
         if entry is None:
             return None
-        self._validate(entry, eval_path, eval_source_hash=eval_source_hash, device_key=device_key)
         return {"file": self.display_path(self.target_path(eval_path)), **entry}
 
-    def lookup(
-        self,
-        eval_path: str | Path,
-        *,
-        eval_source_hash: str | None = None,
-        device_key: str | None = None,
-    ) -> dict[str, Any]:
+    def lookup(self, eval_path: str | Path) -> dict[str, Any]:
         """Load stored baseline summary (`kernel_name` and `avg_ms`)."""
         target = self.target_path(eval_path)
         if not target.is_file():
             raise FileNotFoundError(f"Baseline not found: {self.display_path(target)} (run `gk baseline` first)")
         entry = json.loads(target.read_text(encoding="utf-8"))
-        self._validate(entry, eval_path, eval_source_hash=eval_source_hash, device_key=device_key)
         baseline = entry["baseline"]
         return {
             "kernel_name": baseline["kernel_name"],
@@ -129,30 +73,18 @@ class BaselineStore:
         self,
         eval_path: str | Path,
         *,
-        env: dict[str, Any],
-        measurement_options: dict[str, Any],
         baseline: dict[str, Any],
-        eval_source_hash: str | None = None,
         device_key: str | None = None,
     ) -> tuple[Path, dict[str, Any]]:
         """Persist a measured ref baseline entry atomically."""
         if not isinstance(baseline, dict) or not is_valid_ms(baseline.get("avg_ms")):
             raise ValueError("baseline must contain a finite positive 'avg_ms'")
-        resolved = Path(eval_path).resolve()
-        eval_rel = normalize_path(resolved, self.root)
-        computed_hash = eval_source_hash or (
-            hashlib.sha256(resolved.read_bytes()).hexdigest() if resolved.is_file() else None
-        )
         stored_baseline = {
             k: v for k, v in baseline.items() if k not in ("source", "measured_at")
         }
         stored_baseline["avg_ms"] = float(stored_baseline["avg_ms"])
         entry: dict[str, Any] = {
-            "eval_path": eval_rel,
-            "eval_source_hash": computed_hash,
             "device_key": device_key,
-            "env": dict(env),
-            "measurement_options": dict(measurement_options),
             "measured_at": now_iso(),
             "baseline": stored_baseline,
         }

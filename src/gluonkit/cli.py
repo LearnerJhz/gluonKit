@@ -70,7 +70,7 @@ def _dispatch(args: argparse.Namespace, backend: Backend) -> Any:
     if args.command == "check":
         return run_check(args.eval_path, backend)
     if args.command == "baseline":
-        return run_baseline(args.eval_path, backend, refresh=getattr(args, "refresh", False))
+        return run_baseline(args.eval_path, backend)
     if args.command == "bench":
         return run_bench(
             args.eval_path, backend,
@@ -119,7 +119,6 @@ def main(argv: list[str] | None = None) -> int:
         help="Measure and store ref baseline once if missing",
     )
     baseline_parser.add_argument("eval_path", help="Python script (eval_<name>.py) defining prepare(device)")
-    baseline_parser.add_argument("--refresh", action="store_true", help="Re-measure and overwrite stored baseline")
 
     bench_parser = commands.add_parser(
         "bench",
