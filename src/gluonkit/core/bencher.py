@@ -63,11 +63,11 @@ def bench_task(
     warmup: int | None = None,
     baseline: dict[str, Any] | None = None,
     trace_path: str | None = None,
-    calibrated_peaks: dict[str, float] | None = None,
+    peak_table: dict[str, float] | None = None,
 ) -> BenchResult:
-    """Measure `task['run']` and compute speedup + roofline metrics from `.gluonkit/peaks.json`."""
+    """Measure `task['run']` and compute speedup + theoretical roofline metrics from `.gluonkit/peaks.json`."""
     opts = (options or BenchOptions()).with_overrides(iters=iters, warmup=warmup)
-    peaks = resolve_peaks(task, calibrated_peaks or {})
+    peaks = resolve_peaks(task, peak_table or {})
     measured = backend.profile(
         task["run"], opts.iters, opts.warmup, flush_l2=opts.flush_l2, trace_path=trace_path,
     )
@@ -172,7 +172,7 @@ def run_benchmark(
     history = History(root=root)
     parent = history.get(parent_id)["id"] if parent_id is not None else None
     info = backend.probe()
-    calibrated_peaks = load_peaks(history.root)
+    peak_table = load_peaks(history.root)
 
     eval_rel = history.normalize_path(eval_path)
     stored_baseline = BaselineStore(history.root).lookup(eval_path)
@@ -184,7 +184,7 @@ def run_benchmark(
             options=opts,
             baseline=stored_baseline,
             trace_path=trace_path,
-            calibrated_peaks=calibrated_peaks,
+            peak_table=peak_table,
         )
         bench = result.to_dict()
         summary = collect_kernel_summary(task, backend, bench["kernel"]["name"])

@@ -15,7 +15,8 @@ gluonKit/
 ├── README.md                         # 本文档：src/gluonkit 模块参考与使用说明
 ├── pyproject.toml                    # 包配置与 CLI 入口 gk = "gluonkit.cli:main"
 ├── scripts/
-│   └── calibrate_peaks.py            # 一次性本机峰值标定脚本（写入 .gluonkit/peaks.json）
+│   ├── README.md                     # .gluonkit/peaks.json 格式说明与理论峰值口径
+│   └── init_peaks.py                 # 一次性本机硬件理论峰值初始化脚本（写入 .gluonkit/peaks.json）
 ├── examples/gemm/
 │   ├── gemm.py                       # 示例待调优 Gluon GEMM（FP16 矩阵乘、FP32 累加）
 │   └── eval_gemm.py                  # 示例评测脚本（prepare 入口，同目录配对 gemm.py）
@@ -60,7 +61,7 @@ pip install -e .
 
 # 常用 CLI
 .venv/bin/gk probe
-.venv/bin/python scripts/calibrate_peaks.py          # 环境初始化时一次性标定本机峰值
+.venv/bin/python scripts/init_peaks.py               # 环境初始化时按硬件规格写入理论峰值（未入表设备可直接手写 peaks.json）
 .venv/bin/gk check examples/gemm/eval_gemm.py
 .venv/bin/gk baseline examples/gemm/eval_gemm.py     # 建立固定参考基线（已存在则直接返回）
 .venv/bin/gk bench examples/gemm/eval_gemm.py --note "baseline"
@@ -74,7 +75,7 @@ pip install -e .
 运行时在工作目录下生成 `.gluonkit/`（已加入 `.gitignore`）：
 - `.gluonkit/triton_cache/`：Triton 编译缓存
 - `.gluonkit/history.jsonl`：每次 `gk bench` 的实验记录
-- `.gluonkit/peaks.json`：本机峰值配置（由 `calibrate_peaks.py` 标定或直接手填）
+- `.gluonkit/peaks.json`：本机硬件理论峰值配置（由 `init_peaks.py` 按设备频率、位宽、SM 数与架构每周期算力生成，也支持直接手写）
 - `.gluonkit/baseline/baseline_<name>.json`：`gk baseline <eval.py>` 存储的 `ref()` 基线测量结果
 - `.gluonkit/sources/<sha256>.py`：评测脚本与算子源码内容寻址快照
 - `.gluonkit/dump_info/<eval_stem>/<kernel>/<hash>/`：`kernel.ttgir`、`kernel.llir`、`kernel.ptx`（或 `kernel.maca`）

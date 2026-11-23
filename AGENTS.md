@@ -45,12 +45,12 @@ Gluon 是 Triton 的底层 GPU 编程接口。每个 program 处理一个 tile�
 | `gk bench <eval.py> [--note "..."] [--parent <id>] [--trace]` | 与 `gk baseline` 同口径（默认预热 10 次、每次迭代前清空 L2 Cache，`flush_l2=true`，测量 100 次），读取已存基线算 `speedup` 并写入 `.gluonkit/` | `history_id`, `trace_path`, `kernel`, `metrics`, `baseline`, `peaks` |
 | `gk api list [module]` / `gk api show [-m module] [--full] <symbol>...` | 离线查询本机 `triton.experimental.gluon` 的真实 API（无需 GPU）。**例外：输出纯文本，不是 JSON 信封**；`--full` 输出完整 docstring 与源码文件行号 | 纯文本 |
 | `gk dump-info <eval.py>` | 运行一次，导出后端中间产物到 `.gluonkit/dump_info/<eval名>/<kernel名>/<hash>/` | `artifacts`（文件路径）, `summary`（`n_regs`, `n_spills`, `n_max_threads`, `shared_bytes`, `allocated_shared_bytes`, `num_warps`, `blocks_per_sm`, `occupancy_pct`, `limiting_factor`） |
-| `gk history [<kernel_or_eval>] [--limit N]` | 查看已记录的 `bench` 实验摘要与资源占用。`.gluonkit/history.jsonl` 是 `gk bench` 生成的原始实验记录，可直接读取 | `total`, `records`（`id`, `parent_id`, `trace_path`, `note`, `avg_ms`, `median_ms`, `min_ms`, `p95_ms`, `std_ms`, `delta_vs_parent_pct`, `speedup`, `tflops`, `gbps`, `roofline`, `summary`） |
+| `gk history [<kernel_or_eval>] [--limit N]` | 查看已记录的 `bench` 实验摘要与资源占用。`.gluonkit/history.jsonl` 是 `gk bench` 生成的原始实验记录，可直接读取 | `total`, `records`（`id`, `parent_id`, `trace_path`, `note`, `avg_ms`, `median_ms`, `min_ms`, `p95_ms`, `std_ms`, `delta_vs_parent_pct`, `speedup`, `tflops`, `gbps`, `roofline`, `bound_by`, `roofline_model`, `summary`） |
 | `gk restore <id>` | 按历史快照恢复对应的 `kernel` 文件（支持唯一 ID 前缀） | `id`, `kernel_path`, `kernel_source_hash`, `previous_hash`, `changed` |
 
-`kernel` 包含 `name` 和毫秒计的 `avg`、`median`、`min`、`p95`、`std`。`metrics` 包含 `speedup`、`tflops`、`gbps`、`roofline`（峰值利用率百分比，数据不足时为 `null`）、`bound_by`（`compute` / `memory` / `null`）和 `roofline_model`（`dual_roofline` / `memory_only` / `compute_only` / `null`）。
+`kernel` 包含 `name` 和毫秒计的 `avg`、`median`、`min`、`p95`、`std`。`metrics` 包含 `speedup`、`tflops`、`gbps`、`roofline`（相对硬件理论峰值的利用率百分比，不截断；若工作集命中 L2 Cache 可能大于 100%，数据不足时为 `null`）、`bound_by`（`compute` / `memory` / `null`）和 `roofline_model`（`dual_roofline` / `memory_only` / `compute_only` / `null`）。
 
-`peaks` 是本次从 `.gluonkit/peaks.json` 中枢读取并用于 roofline 计算的峰值 `{"tflops", "gbps"}`。标定由一次性脚本 `.venv/bin/python scripts/calibrate_peaks.py` 完成（写入 `.gluonkit/peaks.json`，不属于 `gk` 命令）。所有 GPU 命令固定使用 `cuda:0`。
+`peaks` 是本次从 `.gluonkit/peaks.json` 读取并用于 roofline 计算的硬件理论峰值（`{"tflops": ..., "gbps": ...}`）。环境初始化时运行一次 `.venv/bin/python scripts/init_peaks.py` 即可按硬件规格计算写入（带宽：`mem_clock × 2 × bus_width / 8`；算力：`sm_count × flops_per_sm_per_clock × max_sm_clock`，不属于 `gk` 命令），也支持直接手写 `.gluonkit/peaks.json`（如沐曦 C500 或锁频场景）。所有 GPU 命令固定使用 `cuda:0`。
 
 ## 评测脚本契约（`eval_<name>.py`）
 
@@ -67,7 +67,7 @@ Gluon 是 Triton 的底层 GPU 编程接口。每个 program 处理一个 tile�
 
 ## 硬规则
 
-1. **禁止篡改评测条件**：调优期间只修改算子文件（如 `examples/gemm/gemm.py`），禁止修改 `eval_*.py` 中的输入、参考实现 `ref`、容差 `atol`/`rtol`、`flops`/`bytes_moved` 或 `compute_mode`。调优期间也不要重跑 `scripts/calibrate_peaks.py`（会改变 roofline 分母，使前后轮不可比）。
+1. **禁止篡改评测条件**：调优期间只修改算子文件（如 `examples/gemm/gemm.py`），禁止修改 `eval_*.py` 中的输入、参考实现 `ref`、容差 `atol`/`rtol`、`flops`/`bytes_moved` 或 `compute_mode`。调优期间也不要修改 `.gluonkit/peaks.json` 或重跑 `scripts/init_peaks.py`（保持前后轮 roofline 分母一致）。
 2. **先 `baseline` / `check` 后 `bench`**：首次对某 `eval_<name>.py` 测速前，需先执行 `gk baseline <eval.py>` 生成 `.gluonkit/baseline/baseline_<name>.json`。每次修改算子后**必须先通过 `gk check`**，再执行 `gk bench`；未过 `check` 的测速结果视为无效。
 3. **禁止盲猜 Gluon API**：写代码前查 `gluon-api` skill，遇到未覆盖的原语用 `.venv/bin/gk api list|show [--full]` 查询，或直接读 `.venv/lib/python3.12/site-packages/triton/experimental/gluon/` 源码核实签名。
 4. **单变量迭代与版本保留**：每次修改只验证一个明确假设。通过校验且确认更快后保留。退化或失败时用 `gk restore <id>` 撤销本轮算子改动，保留工作区已有修改。`bench --parent <id>` 用于关联实验记录，可用 `gk history` 回顾多轮指标与资源变化。

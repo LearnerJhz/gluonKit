@@ -1,39 +1,66 @@
-"""Peak configuration hub (`.gluonkit/peaks.json`) and Roofline evaluation."""
+"""Theoretical hardware peak configuration (`.gluonkit/peaks.json`) and Roofline evaluation."""
 
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
 from gluonkit.core.storage import atomic_write_json, gluonkit_dir, normalize_path, read_json
 
 PEAKS_FILENAME = "peaks.json"
+_INIT_HINT = "run `.venv/bin/python scripts/init_peaks.py` or author `.gluonkit/peaks.json` manually"
 
 
 def peaks_path(root: str | Path | None = None) -> Path:
     return gluonkit_dir(root, PEAKS_FILENAME)
 
 
+def _is_positive_number(value: Any) -> bool:
+    return not isinstance(value, bool) and isinstance(value, (int, float)) and isfinite(value) and value > 0
+
+
 def load_peaks(root: str | Path | None = None) -> dict[str, float]:
-    """Load `.gluonkit/peaks.json` (mandatory hub for `gk bench`)."""
+    """Load theoretical peak values from `.gluonkit/peaks.json` (structured or flat hand-written JSON)."""
     path = peaks_path(root)
+    display = normalize_path(path, root)
     if not path.is_file():
-        display = normalize_path(path, root)
-        raise FileNotFoundError(
-            f"Peaks file not found: {display} (run `.venv/bin/python scripts/calibrate_peaks.py` first)"
-        )
-    data = read_json(path)
-    raw = data["peaks"] if isinstance(data.get("peaks"), dict) else data
-    return {k: float(v) for k, v in raw.items() if not isinstance(v, bool) and isinstance(v, (int, float))}
+        raise FileNotFoundError(f"Peaks file not found: {display} ({_INIT_HINT})")
+    data = read_json(path, recovery_hint=_INIT_HINT)
+    has_envelope = "peaks" in data
+    raw = data["peaks"] if has_envelope else data
+    if not isinstance(raw, dict):
+        raise ValueError(f"{display} 'peaks' must be a JSON object ({_INIT_HINT})")
+    peaks: dict[str, float] = {}
+    for key, value in raw.items():
+        if not has_envelope and isinstance(value, (str, dict, list, type(None))):
+            continue
+        if not _is_positive_number(value):
+            raise ValueError(f"{display} peak {key!r} must be a positive finite number, got {value!r}")
+        peaks[key] = float(value)
+    return peaks
 
 
-def save_peaks(peaks: dict[str, float], root: str | Path | None = None) -> dict[str, float]:
-    """Persist calibrated peak values to `.gluonkit/peaks.json` atomically."""
-    ordered = {k: float(v) for k, v in sorted(peaks.items())}
-    atomic_write_json(peaks_path(root), ordered)
-    return ordered
+def save_peaks(
+    peaks: dict[str, float],
+    root: str | Path | None = None,
+    *,
+    device_key: str | None = None,
+) -> dict[str, Any]:
+    """Persist theoretical hardware peaks to `.gluonkit/peaks.json` atomically."""
+    ordered: dict[str, float] = {}
+    for key, value in sorted(peaks.items()):
+        if not _is_positive_number(value):
+            raise ValueError(f"Peak {key!r} must be a positive finite number, got {value!r}")
+        ordered[key] = float(value)
+
+    payload: dict[str, Any] = (
+        {"device_key": device_key, "peaks": ordered} if device_key is not None else ordered
+    )
+    atomic_write_json(peaks_path(root), payload)
+    return payload
 
 
-def resolve_peaks(task: dict[str, Any], calibrated: dict[str, float]) -> dict[str, float | None] | None:
-    """Resolve the task's required `{tflops, gbps}` peaks from `.gluonkit/peaks.json`."""
+def resolve_peaks(task: dict[str, Any], peak_table: dict[str, float]) -> dict[str, float | None] | None:
+    """Resolve the task's required `{tflops, gbps}` theoretical peaks from `.gluonkit/peaks.json`."""
     flops = task.get("flops")
     bytes_moved = task.get("bytes_moved")
     mode = task.get("compute_mode")
@@ -43,21 +70,15 @@ def resolve_peaks(task: dict[str, Any], calibrated: dict[str, float]) -> dict[st
         if not mode:
             raise ValueError("Task declares 'flops' but no 'compute_mode' (e.g. 'fp16', 'bf16', 'tf32', 'fp32')")
         key = f"tflops_{mode}"
-        if key not in calibrated:
-            raise ValueError(
-                f"Peak {key!r} is missing from .gluonkit/peaks.json "
-                "(run `.venv/bin/python scripts/calibrate_peaks.py`)"
-            )
-        tflops_peak = float(calibrated[key])
+        if key not in peak_table:
+            raise ValueError(f"Peak {key!r} is missing from .gluonkit/peaks.json ({_INIT_HINT})")
+        tflops_peak = float(peak_table[key])
 
     gbps_peak: float | None = None
     if bytes_moved is not None:
-        if "gbps" not in calibrated:
-            raise ValueError(
-                "Peak 'gbps' is missing from .gluonkit/peaks.json "
-                "(run `.venv/bin/python scripts/calibrate_peaks.py`)"
-            )
-        gbps_peak = float(calibrated["gbps"])
+        if "gbps" not in peak_table:
+            raise ValueError(f"Peak 'gbps' is missing from .gluonkit/peaks.json ({_INIT_HINT})")
+        gbps_peak = float(peak_table["gbps"])
 
     if tflops_peak is None and gbps_peak is None:
         return None
@@ -81,7 +102,7 @@ def calculate_roofline(
     bytes_moved: float | None = None,
     peaks: dict[str, float | None] | None = None,
 ) -> dict[str, Any]:
-    """Compute achieved throughput (TFLOP/s, GB/s), bottleneck, and roofline utilization (%)."""
+    """Compute achieved throughput (TFLOP/s, GB/s), bottleneck, and theoretical roofline utilization (%)."""
     peaks = peaks or {}
     peak_compute, peak_memory = peaks.get("tflops"), peaks.get("gbps")
     result: dict[str, Any] = {

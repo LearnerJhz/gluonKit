@@ -122,7 +122,7 @@ def main(argv: list[str] | None = None) -> int:
 
     bench_parser = commands.add_parser(
         "bench",
-        help="Measure mean GPU kernel time and record it in history (roofline uses calibrated peaks)",
+        help="Measure mean GPU kernel time and record it in history (roofline uses theoretical peaks)",
     )
     bench_parser.add_argument("eval_path", help="Python script (eval_<name>.py) defining prepare(device)")
     bench_parser.add_argument("--note", help="What changed and why (stored in history)")

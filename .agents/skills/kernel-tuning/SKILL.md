@@ -11,7 +11,7 @@ description: Systematic GPU kernel performance tuning loop using gk probe, check
 
 1. **摸底（会话开始跑一次）**
    - `.venv/bin/gk probe`：记录 `arch`、`sm_count`、`warp_size` 与共享内存上限（如 NVIDIA 后端返回的 `smem_per_block_optin`）。
-   - Roofline 峰值统一从 `.gluonkit/peaks.json` 中枢读取（`gk bench` 前必须存在该文件）；调优期间不要运行或重跑 `scripts/calibrate_peaks.py`。
+   - Roofline 峰值统一从 `.gluonkit/peaks.json` 读取本机硬件理论上限（`gk bench` 前必须存在该文件，环境初始化时由 `scripts/init_peaks.py` 生成或手动维护）；调优期间不要修改 `.gluonkit/peaks.json` 或重跑 `scripts/init_peaks.py`。
 2. **建基线**
    - `.venv/bin/gk check <eval.py>` -> `.venv/bin/gk baseline <eval.py>`（单独测一次 `ref()` 并存入 `.gluonkit/baseline/baseline_<name>.json`）-> `.venv/bin/gk bench <eval.py> --note "baseline"` -> `.venv/bin/gk dump-info <eval.py>`
    - 记录基线 `history_id`、`kernel.name`、`kernel.avg`、`kernel.std`、`kernel.min`、`kernel.median`、`baseline.avg_ms`、`metrics.speedup` 以及 `summary`（`n_regs`、`n_spills`、`shared_bytes`、`allocated_shared_bytes`、`num_warps`、`blocks_per_sm`、`occupancy_pct`；注意不要只看 `n_max_threads` 误判并发）。

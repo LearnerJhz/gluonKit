@@ -43,6 +43,8 @@ def _extract_metrics(bench: dict) -> dict:
     }
     if kernel.get("iters") is not None:
         extracted["iters"] = kernel.get("iters")
+    if metrics.get("bound_by") is not None:
+        extracted["bound_by"] = metrics.get("bound_by")
     if metrics.get("roofline_model") is not None:
         extracted["roofline_model"] = metrics.get("roofline_model")
     return extracted
