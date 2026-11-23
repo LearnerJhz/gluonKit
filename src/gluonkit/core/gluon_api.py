@@ -111,11 +111,12 @@ def _source_location(obj) -> str | None:
     target = getattr(obj, "fn", obj)
     for candidate in (target, obj):
         try:
-            src_file = inspect.getsourcefile(candidate)
-            _, lineno = inspect.getsourcelines(candidate)
+            unwrapped = inspect.unwrap(candidate)
+            src_file = inspect.getsourcefile(unwrapped)
+            _, lineno = inspect.getsourcelines(unwrapped)
             if src_file:
                 return f"{src_file}:{lineno}"
-        except (OSError, TypeError):
+        except (OSError, TypeError, ValueError):
             continue
     return None
 
