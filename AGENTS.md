@@ -41,7 +41,7 @@ Gluon 是 Triton 的底层 GPU 编程接口。每个 program 处理一个 tile�
 | `gk layout "<expr>" --shape 64,64 [--hardware]` | 离线查看线程/warp 与张量映射（按当前后端 `warp_size` 校验 `threads_per_warp` 乘积） | 格式化映射文本 |
 | `gk bank-conflicts --register-layout "<expr>" --shared-layout "<expr>" --shape 64,32 --dtype float16` | 离线调用 `gl.bank_conflicts()`（无需 GPU；共享布局支持 `SwizzledSharedLayout`） | `bank_conflicts_count`（每个 wavefront 的额外访问次数，0 表示无冲突） |
 | `gk check <eval.py>` | 触发 JIT 编译并校验与 `ref()` 数值一致（默认 `atol=rtol=1e-2`） | `passed`, `atol`, `rtol`, `max_abs_err`, `max_rel_err` |
-| `gk baseline <eval.py>` | 采取固定基线原则：在测速与调优算子之前先跑一次，测量 `ref()` 并存入 `.gluonkit/baseline/baseline_<name>.json`；已存在时直接返回不重测，后续所有 `gk bench` 均在此固定基线之上跑并对比。测量口径与 `gk bench` 一致：默认预热 10 次、每次迭代前清空 L2 Cache（`flush_l2=true`）后测量 100 次 | `file`, `device_key`, `measured_at`, `baseline` |
+| `gk baseline <eval.py>` | 采取固定基线原则：在测速与调优算子之前先跑一次，测量 `ref()` 并存入 `.gluonkit/baseline/baseline_<name>.json`；已存在时直接返回不重测，后续所有 `gk bench` 均在此固定基线之上跑并对比。**注意：基线仅按文件名 `<name>` 索引（不校验路径与内容哈希），不同评测任务须使用不同 `<name>`；若更换或修改了评测脚本，须先手动删除对应 `baseline_<name>.json` 再重跑。** 测量口径与 `gk bench` 一致：默认预热 10 次、每次迭代前清空 L2 Cache（`flush_l2=true`）后测量 100 次 | `file`, `device_key`, `measured_at`, `baseline` |
 | `gk bench <eval.py> [--note "..."] [--parent <id>] [--trace]` | 与 `gk baseline` 同口径（默认预热 10 次、每次迭代前清空 L2 Cache，`flush_l2=true`，测量 100 次），读取已存基线算 `speedup` 并写入 `.gluonkit/` | `history_id`, `trace_path`, `kernel`, `metrics`, `baseline`, `peaks` |
 | `gk api list [module]` / `gk api show [-m module] [--full] <symbol>...` | 离线查询本机 `triton.experimental.gluon` 的真实 API（无需 GPU）。**例外：输出纯文本，不是 JSON 信封**；`--full` 输出完整 docstring 与源码文件行号 | 纯文本 |
 | `gk dump-info <eval.py>` | 运行一次，导出后端中间产物到 `.gluonkit/dump_info/<eval名>/<kernel名>/<hash>/` | `artifacts`（文件路径）, `summary`（`n_regs`, `n_spills`, `n_max_threads`, `shared_bytes`, `allocated_shared_bytes`, `num_warps`, `blocks_per_sm`, `occupancy_pct`, `limiting_factor`） |
@@ -54,7 +54,7 @@ Gluon 是 Triton 的底层 GPU 编程接口。每个 program 处理一个 tile�
 
 ## 评测脚本契约（`eval_<name>.py`）
 
-评测脚本须与待测算子 `<name>.py` 同目录配对、实际导入 `<name>.py`，并定义 `prepare(device)` 返回任务字典（字段逻辑见 [checker.py](src/gluonkit/core/checker.py)、[roofline.py](src/gluonkit/core/roofline.py) 与 [examples/gemm/eval_gemm.py](examples/gemm/eval_gemm.py)）：
+评测脚本须与待测算子 `<name>.py` 同目录配对、实际导入 `<name>.py`，并定义 `prepare(device)` 返回任务字典（不同评测任务的 `<name>` 须保持唯一，避免共用同一 `.gluonkit/baseline/baseline_<name>.json`；字段逻辑见 [checker.py](src/gluonkit/core/checker.py)、[roofline.py](src/gluonkit/core/roofline.py) 与 [examples/gemm/eval_gemm.py](examples/gemm/eval_gemm.py)）：
 
 | 字段 | 是否必填 | 作用与写法建议 |
 |---|---|---|
