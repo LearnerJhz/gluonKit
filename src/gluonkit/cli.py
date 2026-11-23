@@ -5,6 +5,7 @@ import sys
 from typing import Any
 
 from gluonkit.backends.registry import get_backend
+from gluonkit.core.bencher import BenchOptions
 from gluonkit.executor import (
     run_bank_conflicts,
     run_baseline,
@@ -114,15 +115,26 @@ def main(argv: list[str] | None = None) -> int:
                                        help="Compile (JIT) and check correctness against ref")
     check_parser.add_argument("eval_path", help="Python script defining prepare(device)")
 
+    opts = BenchOptions()
+    protocol_note = (
+        f"fixed protocol: {opts.warmup} warmup, {opts.iters} iters, "
+        f"{'L2 flush before each iter' if opts.flush_l2 else 'no L2 flush'}"
+    )
+
     baseline_parser = commands.add_parser(
         "baseline",
         help="Measure and store ref baseline once if missing",
+        description=f"Measure ref() once and store the baseline in .gluonkit/baseline/ if missing ({protocol_note}).",
     )
     baseline_parser.add_argument("eval_path", help="Python script (eval_<name>.py) defining prepare(device)")
 
     bench_parser = commands.add_parser(
         "bench",
-        help="Measure mean GPU kernel time and record it in history (roofline uses theoretical peaks)",
+        help="Measure GPU kernel time and record it in history (roofline uses theoretical peaks)",
+        description=(
+            "Measure run() against stored baseline and theoretical peaks, record in history, "
+            f"and return timing, roofline, and resource summary ({protocol_note})."
+        ),
     )
     bench_parser.add_argument("eval_path", help="Python script (eval_<name>.py) defining prepare(device)")
     bench_parser.add_argument("--note", help="What changed and why (stored in history)")

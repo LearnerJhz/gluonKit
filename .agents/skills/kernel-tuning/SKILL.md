@@ -13,8 +13,8 @@ description: Systematic GPU kernel performance tuning loop using gk probe, check
    - `.venv/bin/gk probe`：记录 `arch`、`sm_count`、`warp_size` 与共享内存上限（如 NVIDIA 后端返回的 `smem_per_block_optin`）。
    - Roofline 峰值统一从 `.gluonkit/peaks.json` 读取本机硬件理论上限（`gk bench` 前必须存在该文件，环境初始化时由 `scripts/init_peaks.py` 生成或手动维护）；调优期间不要修改 `.gluonkit/peaks.json` 或重跑 `scripts/init_peaks.py`。
 2. **建基线**
-   - `.venv/bin/gk check <eval.py>` -> `.venv/bin/gk baseline <eval.py>`（单独测一次 `ref()` 并存入 `.gluonkit/baseline/baseline_<name>.json`）-> `.venv/bin/gk bench <eval.py> --note "baseline"` -> `.venv/bin/gk dump-info <eval.py>`
-   - 记录基线 `history_id`、`kernel.name`、`kernel.avg`、`kernel.std`、`kernel.min`、`kernel.median`、`baseline.avg_ms`、`metrics.speedup` 以及 `summary`（`n_regs`、`n_spills`、`shared_bytes`、`allocated_shared_bytes`、`num_warps`、`blocks_per_sm`、`occupancy_pct`；注意不要只看 `n_max_threads` 误判并发）。
+   - `.venv/bin/gk check <eval.py>` -> `.venv/bin/gk baseline <eval.py>`（单独测一次 `ref()` 并存入 `.gluonkit/baseline/baseline_<name>.json`）-> `.venv/bin/gk bench <eval.py> --note "baseline"`（需要导出 IR/汇编时再跑 `.venv/bin/gk dump-info <eval.py>`）
+   - 记录基线 `history_id`、`kernel.name`、`kernel.avg`、`kernel.std`、`kernel.min`、`kernel.median`、`baseline.avg_ms`、`metrics.speedup` 以及 `gk bench` 直接返回的 `summary`（`n_regs`、`n_spills`、`shared_bytes`、`allocated_shared_bytes`、`num_warps`、`blocks_per_sm`、`occupancy_pct`、`limiting_factor`；注意不要只看 `n_max_threads` 误判并发）。
    - 日常 `gk bench <eval.py>` 默认只测待测算子并直接读取已存基线算 `speedup`；基线文件仅按文件名 `<name>` 索引（不校验路径与内容哈希），已存在时 `gk baseline` 不会重测。因此不同评测任务须使用不同 `<name>`；若更换了同名评测脚本或需要刷新基线，必须先删除对应 `.gluonkit/baseline/baseline_<name>.json` 后再重跑 `.venv/bin/gk baseline <eval.py>`。
    - `gk` 将 Triton 编译缓存固定写入 `.gluonkit/triton_cache`（沙盒可直接写入）；首次编译略慢，后续仅在算子源码或编译常量变化时重编（需要强制重编可传 `TRITON_ALWAYS_COMPILE=1`）。
 3. **提假设并单点改动**
@@ -29,14 +29,14 @@ description: Systematic GPU kernel performance tuning loop using gk probe, check
    - **判断阈值：单次改动提速小于 2%–3% 或未显著超出测量标准差 `kernel.std` 时不算确认收益**；若接近临界值，连续复测 2–3 次观察稳定性。
    - 确认明显更快 -> 保留当前版本（以此次 `history_id` 作为后续 `--parent`）；变慢或无效 -> 用 `gk restore <id>` 回退单轮算子实验，切下一个假设。
 6. **按需诊断**
-   - 性能未按预期提升时跑 `gk dump-info <eval.py>` 检查资源摘要和后端导出的中间表示/汇编；需要看发射空隙、并发受限因子或执行轨迹时跑 `gk bench <eval.py> --trace`。
+   - 性能未按预期提升时，先看 `gk bench` 返回的 `summary`（含 `limiting_factor`），需要检查中间表示/汇编时再跑 `gk dump-info <eval.py>`；需要看发射空隙或执行轨迹时跑 `gk bench <eval.py> --trace`。
 
 ## 瓶颈诊断与优化杠杆
 
 | 观测现象（来自 `bench` / `dump-info` / 中间产物） | 根因定位 | 优先尝试的优化手段 |
 |---|---|---|
 | `n_spills > 0`（或后端产物出现 local/scratch 溢出） | 寄存器溢出到慢速局部存储 | 减小 `BM`/`BN`/`BK`、减少同时活跃变量或 stage 数、消除冗余 `convert_layout` |
-| `blocks_per_sm` / `occupancy_pct` 低 | 并发受寄存器（`n_regs`）、共享内存（`allocated_shared_bytes`）、warp 数或计算单元 block 上限限制（注：`summary` 暂不提供受限因子拆解，`n_max_threads` 也不含共享内存限制；可用 `gk bench --trace` 或后端信息进一步区分瓶颈） | 若受寄存器限制可减变量/调整 `num_warps`；若受共享内存限制可减小 tile 或 `NUM_STAGES`；若更大的 tile 复用收益更高则优先保留吞吐 |
+| `blocks_per_sm` / `occupancy_pct` 低 | 并发受寄存器（`n_regs`）、共享内存（`allocated_shared_bytes`）、warp 数或计算单元 block 上限限制（结合 `summary.limiting_factor` 定位主要受限资源；`n_max_threads` 不含共享内存限制，需看发射空隙可配合 `gk bench --trace`） | 若受寄存器限制可减变量/调整 `num_warps`；若受共享内存限制可减小 tile 或 `NUM_STAGES`；若更大的 tile 复用收益更高则优先保留吞吐 |
 | `shared_bytes` 接近设备单 block 上限 | 共享内存限制并发 block 或多级缓冲 | 收紧 `NUM_STAGES` 或调整 tile 形状，避免超出设备上限 |
 | 中间 IR 中循环内存在多余 `convert_layout` | 寄存器布局不匹配触发隐藏 shared 中转或高开销指令 | 统一加载、计算、写回的 layout 链路，尽量把转换推到循环外（如 epilogue） |
 | 多级预取在主循环每步等待全部传输完成 | 消费最早 tile 前过早排空了流水线 | 按提交与消费次序设置最小等待深度（如 NVIDIA Ampere 见 [Ampere 环形预取的等待深度](../../../.knowledge/gluon-api/nvidia/nvidia-sm86.md#ampere-环形预取的等待深度)） |

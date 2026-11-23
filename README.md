@@ -93,9 +93,11 @@ gluonKit/
 .venv/bin/gk check examples/gemm/eval_gemm.py        # 编译并校验数值正确性
 .venv/bin/gk baseline examples/gemm/eval_gemm.py     # 建立固定参考基线（已存在则直接返回）
 .venv/bin/gk bench examples/gemm/eval_gemm.py --note "baseline"
+# 改动算子并通过 gk check 后，用 --parent 串联实验记录：
+# .venv/bin/gk bench examples/gemm/eval_gemm.py --note "v2" --parent <history_id>
 .venv/bin/gk dump-info examples/gemm/eval_gemm.py    # 导出 IR/汇编与资源占用摘要
 .venv/bin/gk history examples/gemm/eval_gemm.py --limit 5
-.venv/bin/gk restore <history_id>                    # 按历史快照回退算子文件
+# .venv/bin/gk restore <history_id>                  # 按需回退到某次历史快照
 .venv/bin/gk api list [module]                       # 列出 Gluon API
 .venv/bin/gk api show --full load store              # 查询符号签名、完整参数说明与定义源码行号
 ```

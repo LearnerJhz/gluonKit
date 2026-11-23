@@ -204,4 +204,4 @@ def run_benchmark(
             "summary": summary,
         })
 
-    return {"history_id": record["id"], **bench}
+    return {"history_id": record["id"], **bench, "summary": summary}
