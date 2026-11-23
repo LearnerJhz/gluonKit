@@ -2,18 +2,51 @@
 
 面向 AI Agent 与本地开发者使用的 SIMT GPU Gluon kernel 开发、分析与性能调优工具链。
 
-> 本文档与 [ARCHITECTURE.md](ARCHITECTURE.md) 说明 `src/gluonkit` 的代码架构、模块职责与接口契约。Agent 调优使用的命令行规则与硬约束以 [AGENTS.md](AGENTS.md) 和 `.venv/bin/gk --help` 为准。
+> 本文档说明项目的使用方式、目录结构与 `src/gluonkit` 模块职责。Agent 调优使用的命令行规则与硬约束以 [AGENTS.md](AGENTS.md) 和 `.venv/bin/gk --help` 为准。
 
 ---
 
-## 1. 目录结构
+## 1. 使用方式
+
+### 1.1 配置环境
+
+需要 Python >= 3.10、`torch` 与 `triton==3.8.0`：
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e .
+```
+
+### 1.2 初始化本机理论峰值
+
+生成 `.gluonkit/peaks.json` 供 `gk bench` 计算 Roofline（当前脚本针对 NVIDIA 平台）：
+
+```bash
+.venv/bin/python scripts/init_peaks.py
+```
+
+- 迁移到沐曦 C500 平台时，将 [src/gluonkit/backends/registry.py](src/gluonkit/backends/registry.py) 中的 `DEFAULT_BACKEND` 改为 `"metax"`，并按 [scripts/README.md](scripts/README.md) 编写脚本或手写覆盖 `.gluonkit/peaks.json`。
+- 可运行 `.venv/bin/gk probe` 确认 GPU 架构与软件版本识别正常。
+
+### 1.3 启动 Agent 开发与调优
+
+在仓库根目录启动 Coding Agent（会自动加载 [AGENTS.md](AGENTS.md) 与 `.agents/skills/`），直接下达任务即可。推荐将实战算子放在 `kernels/` 下（已加入 `.gitignore`）。
+
+参考提示词：
+
+> 你是一个资深算子开发工程师，参考 `examples/gemm/`，在 `kernels/gemm/` 里用 Gluon 实现并调优 GEMM GPU 算子，目标在通过 `gk check` 的前提下尽可能超越 `ref`。
+
+---
+
+## 2. 目录结构
 
 ```text
 gluonKit/
 ├── AGENTS.md                         # Agent 入口规则与 CLI 契约（SSOT）
-├── ARCHITECTURE.md                   # 架构说明（SIMT 后端静态注册：NVIDIA → 沐曦 C500）
-├── README.md                         # 本文档：src/gluonkit 模块参考与使用说明
+├── README.md                         # 本文档：使用方式、目录结构与模块参考
 ├── pyproject.toml                    # 包配置与 CLI 入口 gk = "gluonkit.cli:main"
+├── .agents/skills/                   # Agent Skills（gluon-api、kernel-tuning；.claude/skills 软链至此）
+├── .knowledge/gluon-api/             # Gluon API 与硬件平台知识库
 ├── scripts/
 │   ├── README.md                     # .gluonkit/peaks.json 格式说明与理论峰值口径
 │   └── init_peaks.py                 # 一次性本机硬件理论峰值初始化脚本（写入 .gluonkit/peaks.json）
@@ -53,21 +86,16 @@ gluonKit/
 
 ---
 
-## 2. 常用操作与运行时目录
+## 3. 常用 CLI 与运行时目录
 
 ```bash
-# 安装 / 可编辑模式开发（需要 Python >= 3.10, torch, triton==3.8.0）
-pip install -e .
-
-# 常用 CLI
-.venv/bin/gk probe
-.venv/bin/python scripts/init_peaks.py               # 环境初始化时按硬件规格写入理论峰值（未入表设备可直接手写 peaks.json）
-.venv/bin/gk check examples/gemm/eval_gemm.py
+.venv/bin/gk probe                                   # 查看本机 GPU 与软件环境
+.venv/bin/gk check examples/gemm/eval_gemm.py        # 编译并校验数值正确性
 .venv/bin/gk baseline examples/gemm/eval_gemm.py     # 建立固定参考基线（已存在则直接返回）
 .venv/bin/gk bench examples/gemm/eval_gemm.py --note "baseline"
-.venv/bin/gk dump-info examples/gemm/eval_gemm.py
+.venv/bin/gk dump-info examples/gemm/eval_gemm.py    # 导出 IR/汇编与资源占用摘要
 .venv/bin/gk history examples/gemm/eval_gemm.py --limit 5
-.venv/bin/gk restore <history_id>
+.venv/bin/gk restore <history_id>                    # 按历史快照回退算子文件
 .venv/bin/gk api list [module]                       # 列出 Gluon API
 .venv/bin/gk api show --full load store              # 查询符号签名、完整参数说明与定义源码行号
 ```
