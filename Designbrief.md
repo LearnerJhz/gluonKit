@@ -41,7 +41,7 @@ flowchart TD
     subgraph Layer5["5. SIMT 后端和相关工具"]
         Proto["Backend Protocol (统一后端抽象接口)"]
         NV["NvidiaBackend (NVIDIA 后端适配)"]
-        MX["MetaxBackend (沐曦后端适配)"]
+        MX["MetaxBackend (Wave64 后端适配)"]
         Store[".gluonkit/ (缓存、基线与实验数据)"]
     end
 
@@ -92,7 +92,7 @@ flowchart LR
 ### 1. 静态知识库（`.knowledge/gluon-api/`）
 
 1. **通用 API 文档（`gluon-api-common.md`）** 做了一层通用原语的分类和索引
-2. **平台专用 API 文档（`nvidia.md`、`nvidia-sm86.md`）** 以后接沐曦 C500，在同级新建一个平台目录
+2. **平台专用 API 文档（`nvidia.md`、`nvidia-sm86.md`）** 后续接入其他平台时，在同级新建对应平台目录
 3. **Gluon 报错速查文档**
 
 ### 2. 动态查询（`gk api`）

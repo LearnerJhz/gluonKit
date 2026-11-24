@@ -30,4 +30,4 @@
 - `gbps`：理论显存带宽（GB/s），对应评测脚本中的 `bytes_moved`。
 - `tflops_<compute_mode>`：理论稠密算力（TFLOP/s，FP16/BF16 Tensor Core 按 FP32 累加口径），对应评测脚本中的 `flops` + `compute_mode`。
 
-对于其他平台（如沐曦 C500）、未入表型号或锁频环境，按上述格式直接手写 `.gluonkit/peaks.json` 即可。
+对于其他平台、未入表型号或锁频环境，按上述格式直接手写 `.gluonkit/peaks.json` 即可。

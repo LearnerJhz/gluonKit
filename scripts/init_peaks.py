@@ -5,7 +5,7 @@ throughput (`sm_count * flops_per_sm_per_clock * max_sm_clock`) from GPU specs::
 
     .venv/bin/python scripts/init_peaks.py
 
-For unsupported GPUs (e.g. MetaX C500) or locked-clock setups, author `.gluonkit/peaks.json` directly.
+For unsupported GPUs or locked-clock setups, author `.gluonkit/peaks.json` directly.
 """
 
 import argparse

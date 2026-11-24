@@ -1,4 +1,4 @@
-"""Static backend registry. Change `DEFAULT_BACKEND` when deploying on a MetaX C500 machine."""
+"""Static backend registry. Change `DEFAULT_BACKEND` to select the active backend."""
 
 from gluonkit.backends.metax.backend import MetaxBackend
 from gluonkit.backends.nvidia.backend import NvidiaBackend
@@ -9,7 +9,7 @@ BACKENDS: dict[str, type[Backend]] = {
     "metax": MetaxBackend,
 }
 
-# 当前机器使用的固定后端与设备（迁移到沐曦 C500 机器时将 DEFAULT_BACKEND 改为 "metax"）
+# 当前机器使用的固定后端与设备
 DEFAULT_BACKEND = "nvidia"
 DEFAULT_DEVICE = "cuda:0"
 

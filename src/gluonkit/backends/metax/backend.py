@@ -1,4 +1,4 @@
-"""MetaX (沐曦) C500 SIMT Backend implementation (Wave64)."""
+"""SIMT Wave64 backend implementation."""
 
 from pathlib import Path
 from typing import Any, Callable
@@ -12,7 +12,7 @@ from gluonkit.interfaces.types import ProbeResult, ProfileData
 
 
 def _metax_kernel_summary(kernel: Any) -> dict[str, Any]:
-    """Collect MetaX C500 (Wave64, 64KB LDS, 32 waves/CU) kernel resource summary."""
+    """Collect Wave64 (64KB LDS, 32 waves/CU) kernel resource summary."""
     metadata = getattr(kernel, "metadata", None)
     shared_bytes = _metadata_value(metadata, "shared")
     num_warps = _metadata_value(metadata, "num_warps")
@@ -55,7 +55,7 @@ class MetaxBackend(Backend):
         import triton
 
         props = torch.cuda.get_device_properties(self.device)
-        arch = getattr(props, "gcnArchName", None) or "maca_c500"
+        arch = getattr(props, "gcnArchName", None) or "unknown"
         if isinstance(arch, str):
             arch = arch.split(":")[0].strip()
         smem = getattr(props, "shared_memory_per_block_optin", None) or getattr(
@@ -79,11 +79,11 @@ class MetaxBackend(Backend):
     def bank_conflicts(
         self, register_layout: str, shared_layout: str, shape: list[int], dtype: str,
     ) -> dict[str, int]:
-        # TODO(metax): 当前直接复用 NVIDIA 实现，空壳 MLIR Module 未设置目标架构属性，
+        # TODO: 当前直接复用 NVIDIA 实现，空壳 MLIR Module 未设置目标架构属性，
         # Triton 底层会默认按 NVIDIA 32-bank / 128B 的 ld.shared/st.shared 模型估算，
-        # 且 AST 白名单仅放行 NVIDIA 常用布局。迁移到沐曦环境后需按实际 Triton 发行版：
+        # 且 AST 白名单仅放行 NVIDIA 常用布局。迁移到目标环境后需按实际 Triton 发行版：
         # 1) 为离线 MLIR Module 注入目标架构属性（如 ttg.target / ttg.threads-per-warp）；
-        # 2) 按需扩充 MetaX/Wave64 专属 MMA 与 LDS 布局构造器白名单。
+        # 2) 按需扩充 Wave64 专属 MMA 与 LDS 布局构造器白名单。
         return bank_conflicts(register_layout, shared_layout, shape, dtype)
 
     def dump_info(

@@ -27,7 +27,7 @@ Gluon 是 Triton 的底层 GPU 编程接口。每个 program 处理一个 tile�
 ## 环境与后端注册
 
 - CLI 入口：`.venv/bin/gk`
-- 后端注册：[src/gluonkit/backends/registry.py](src/gluonkit/backends/registry.py) 静态注册了 `"nvidia"`（`NvidiaBackend`）与 `"metax"`（`MetaxBackend`），通过 `DEFAULT_BACKEND` 指定当前机器的确定后端（在沐曦机器上改为 `"metax"`）。
+- 后端注册：[src/gluonkit/backends/registry.py](src/gluonkit/backends/registry.py)，通过 `DEFAULT_BACKEND` 指定当前机器的确定后端。
 - Triton 缓存：`gk` 将 `TRITON_CACHE_DIR` 固定设为当前目录下的 `.gluonkit/triton_cache`（沙盒内可直接运行，无需额外配置）。
 - 沙箱与 `probe` 探测：部分环境下在沙箱内运行 `gk probe` 获取 GPU 硬件信息可能会因设备或驱动访问受限而报错。若确认报错由沙箱限制引起，可申请在沙箱外执行 `.venv/bin/gk probe`，或自行通过命令获取所需信息（如 `nvidia-smi` / 对应平台设备查询命令，以及用 `.venv/bin/python` 查询 `torch.__version__`、`triton.__version__` 与 `torch.cuda.get_device_properties(0)`）。
 
@@ -50,7 +50,7 @@ Gluon 是 Triton 的底层 GPU 编程接口。每个 program 处理一个 tile�
 
 `kernel` 包含 `name` 和毫秒计的 `avg`、`median`、`min`、`p95`、`std`。`metrics` 包含 `speedup`、`tflops`、`gbps`、`roofline`（相对硬件理论峰值的利用率百分比，不截断；若工作集命中 L2 Cache 可能大于 100%，数据不足时为 `null`）、`bound_by`（`compute` / `memory` / `null`）和 `roofline_model`（`dual_roofline` / `memory_only` / `compute_only` / `null`）。
 
-`peaks` 是本次从 `.gluonkit/peaks.json` 读取并用于 roofline 计算的硬件理论峰值（`{"tflops": ..., "gbps": ...}`）。环境初始化时运行一次 `.venv/bin/python scripts/init_peaks.py` 即可按硬件规格计算写入（带宽：`mem_clock × 2 × bus_width / 8`；算力：`sm_count × flops_per_sm_per_clock × max_sm_clock`，不属于 `gk` 命令），也支持直接手写 `.gluonkit/peaks.json`（如沐曦 C500 或锁频场景）。所有 GPU 命令固定使用 `cuda:0`。
+`peaks` 是本次从 `.gluonkit/peaks.json` 读取并用于 roofline 计算的硬件理论峰值（`{"tflops": ..., "gbps": ...}`）。环境初始化时运行一次 `.venv/bin/python scripts/init_peaks.py` 即可按硬件规格计算写入（带宽：`mem_clock × 2 × bus_width / 8`；算力：`sm_count × flops_per_sm_per_clock × max_sm_clock`，不属于 `gk` 命令），也支持直接手写 `.gluonkit/peaks.json`（如其他平台或锁频场景）。所有 GPU 命令固定使用 `cuda:0`。
 
 ## 评测脚本契约（`eval_<name>.py`）
 

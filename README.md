@@ -25,7 +25,7 @@ python3 -m venv .venv
 .venv/bin/python scripts/init_peaks.py
 ```
 
-- 迁移到沐曦 C500 平台时，将 [src/gluonkit/backends/registry.py](src/gluonkit/backends/registry.py) 中的 `DEFAULT_BACKEND` 改为 `"metax"`，并按 [scripts/README.md](scripts/README.md) 编写脚本或手写覆盖 `.gluonkit/peaks.json`。
+- 迁移时，将 [src/gluonkit/backends/registry.py](src/gluonkit/backends/registry.py) 中的 `DEFAULT_BACKEND` 改为 `"metax"`，并按 [scripts/README.md](scripts/README.md) 编写脚本或手写覆盖 `.gluonkit/peaks.json`。
 - 可运行 `.venv/bin/gk probe` 确认 GPU 架构与软件版本识别正常。
 
 ### 1.3 启动 Agent 开发与调优
@@ -71,7 +71,7 @@ gluonKit/
     │   └── history.py                # History：.gluonkit/ 实验记录、摘要读取与快照恢复
     └── backends/
         ├── __init__.py
-        ├── registry.py               # 后端静态注册表（DEFAULT_BACKEND = "nvidia"，切沐曦改 "metax"；DEFAULT_DEVICE = "cuda:0"）
+        ├── registry.py               # 后端静态注册表（通过 DEFAULT_BACKEND 切换后端，默认 "nvidia"；DEFAULT_DEVICE = "cuda:0"）
         ├── nvidia/
         │   ├── backend.py            # NvidiaBackend（warp_size = 32）
         │   ├── probe.py              # GPU 设备属性与 PyTorch/Triton 版本探测
@@ -81,7 +81,7 @@ gluonKit/
         │   └── profiler.py           # torch.profiler 事件关联计时、P95 统计与 trace 导出
         └── metax/
             ├── __init__.py
-            └── backend.py            # MetaxBackend（沐曦 C500：warp_size = 64）
+            └── backend.py            # MetaxBackend（warp_size = 64）
 ```
 
 ---
@@ -108,5 +108,5 @@ gluonKit/
 - `.gluonkit/peaks.json`：本机硬件理论峰值配置（由 `init_peaks.py` 按设备频率、位宽、SM 数与架构每周期算力生成，也支持直接手写）
 - `.gluonkit/baseline/baseline_<name>.json`：`gk baseline <eval.py>` 存储的 `ref()` 基线测量结果
 - `.gluonkit/sources/<sha256>.py`：评测脚本与算子源码内容寻址快照
-- `.gluonkit/dump_info/<eval_stem>/<kernel>/<hash>/`：`kernel.ttgir`、`kernel.llir`、`kernel.ptx`（或 `kernel.maca`）
+- `.gluonkit/dump_info/<eval_stem>/<kernel>/<hash>/`：`kernel.ttgir`、`kernel.llir`、`kernel.ptx` 等后端编译产物
 - `.gluonkit/traces/bench-*/trace.json`：`gk bench --trace` 导出的 Chrome trace
